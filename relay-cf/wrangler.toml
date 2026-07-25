@@ -1,0 +1,21 @@
+name = "antigravity-remote-relay"
+main = "src/worker.ts"
+compatibility_date = "2026-06-01"
+
+# テナント=room ごとに 1 インスタンスへ集約する Durable Object
+[[durable_objects.bindings]]
+name = "RELAY_ROOM"
+class_name = "RelayRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RelayRoom"]
+
+# スマホPWA(client/)を同じworkerで配信する。静的ファイルに一致しない
+# リクエスト(/ws, /health)は default export の fetch に落ちる。
+# → 1ドメイン・1回のdeployでリレーとPWAが完結。clientBaseUrl設定は不要になる。
+[assets]
+directory = "../client"
+
+[observability]
+enabled = true

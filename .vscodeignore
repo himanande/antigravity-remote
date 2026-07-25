@@ -1,0 +1,19 @@
+# .vsix に入れるのは dist/(バンドル済みJS + node_modules/node-pty) と最小限のメタのみ
+
+.vscode/**
+.github/**
+node_modules/**
+src/**
+scripts/**
+relay/**
+relay-cf/**
+client/**
+docs/**
+vendor-prebuilds/**
+scratch-*
+esbuild.js
+tsconfig.json
+.gitignore
+.vscodeignore
+**/*.map
+**/*.ts

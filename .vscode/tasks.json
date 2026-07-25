@@ -1,0 +1,13 @@
+{
+  // F5 の preLaunchTask から呼ばれるビルドタスク。
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "build",
+      "problemMatcher": [],
+      "label": "npm: build",
+      "detail": "esbuild で dist/extension.js を生成"
+    }
+  ]
+}

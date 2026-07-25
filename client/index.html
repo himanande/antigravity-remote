@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>Antigravity Remote</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <!-- 依存は自己ホスト(vendor/)+SRIで固定。第三者CDN汚染で暗号鍵を盗まれるリスクを排除。 -->
+  <link rel="stylesheet" href="vendor/xterm.min.css"
+    integrity="sha384-tStR1zLfWgsiXCF3IgfB3lBa8KmBe/lG287CL9WCeKgQYcp1bjb4/+mwN6oti4Co" />
+  <style>
+    :root { --bg:#1e1e1e; --bar:#252526; --line:#333; --fg:#ddd; --muted:#888;
+      --accent:#3fb950; --warn:#d29922; --err:#f85149; }
+    html, body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+      font-family:system-ui, sans-serif; -webkit-tap-highlight-color:transparent;
+      overflow:hidden; }
+    /* ソフトキーボード表示中もキーバーを可視域内に留めるため、visualViewport に合わせて
+       JS が height/transform を設定する(下記 applyViewport)。fixed で可視域にピン留め。 */
+    #app { position:fixed; top:0; left:0; width:100%; height:100%;
+      display:flex; flex-direction:column; }
+
+    /* 共通バー */
+    .bar { display:flex; align-items:center; gap:8px; padding:8px 12px;
+      background:var(--bar); font-size:14px; min-height:24px; border-bottom:1px solid var(--line); }
+    .bar .grow { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); flex:none; }
+    .dot.on { background:var(--accent); } .dot.off { background:var(--err); }
+    button { font:inherit; color:var(--fg); background:#2d2d30; border:1px solid var(--line);
+      border-radius:6px; padding:6px 10px; }
+    button:active { background:#3a3a3d; }
+
+    /* 一覧 */
+    #listView { flex:1; overflow-y:auto; }
+    .row { display:flex; align-items:center; gap:10px; padding:14px 14px;
+      border-bottom:1px solid var(--line); }
+    .row .icon { font-size:20px; flex:none; width:24px; text-align:center; }
+    .row .meta { flex:1; overflow:hidden; }
+    .row .title { font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .row .sub { font-size:12px; color:var(--muted); margin-top:2px; }
+    .badge { font-size:11px; padding:2px 8px; border-radius:10px; flex:none; }
+    .badge.running { background:rgba(63,185,80,.18); color:var(--accent); }
+    .badge.waiting-input { background:rgba(210,153,34,.2); color:var(--warn); }
+    .badge.idle { background:#333; color:var(--muted); }
+    .badge.exited { background:rgba(248,81,73,.18); color:var(--err); }
+    #empty { color:var(--muted); text-align:center; padding:40px 20px; }
+    #newBar { display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line);
+      background:var(--bar); }
+
+    /* 端末 */
+    #termView { flex:1; min-height:0; display:none; flex-direction:column; }
+    #term { flex:1; min-height:0; padding:4px; }
+
+    /* スマホ用キーバー(端末ビュー下部)。矢印/Esc/Tab/Ctrl 等を補う。 */
+    #keybar { display:flex; gap:6px; padding:6px 8px; background:var(--bar);
+      border-top:1px solid var(--line); overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    #keybar button { flex:none; min-width:44px; padding:10px 12px; font-size:15px;
+      touch-action:manipulation; }
+    #keybar button.armed { background:var(--accent); color:#04260c; border-color:var(--accent); }
+    #customKeys { display:contents; }
+    #keybar button.custom { background:#26343a; border-color:#2f4a55; }
+    #keybar button.custom:active { background:#31454e; }
+    #addKeyBtn { font-size:18px; line-height:1; color:var(--muted); }
+
+    /* ショートカット管理 ボトムシート */
+    #modal { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none;
+      align-items:flex-end; z-index:50; }
+    #modal.show { display:flex; }
+    .sheet { width:100%; background:var(--bar); border-top:1px solid var(--line);
+      border-radius:14px 14px 0 0; padding:14px 14px calc(14px + env(safe-area-inset-bottom));
+      max-height:80%; overflow-y:auto; }
+    .sheetHead { display:flex; align-items:center; font-size:16px; margin-bottom:12px; }
+    .sheetHead .grow { flex:1; }
+    #customList { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+    #customList:empty::after { content:"まだショートカットはありません"; color:var(--muted); font-size:13px; }
+    .crow { display:flex; align-items:center; gap:10px; padding:8px 10px; background:#2d2d30;
+      border:1px solid var(--line); border-radius:8px; }
+    .crow .clabel { font-weight:600; flex:none; }
+    .crow .cval { flex:1; color:var(--muted); font-size:12px; overflow:hidden;
+      text-overflow:ellipsis; white-space:nowrap; }
+    .crow .del { color:var(--err); border-color:#5a2a2a; }
+    .addForm { display:flex; flex-direction:column; gap:8px; border-top:1px solid var(--line); padding-top:12px; }
+    .addForm input[type=text] { font:inherit; color:var(--fg); background:#1e1e1e;
+      border:1px solid var(--line); border-radius:8px; padding:10px; }
+    .addForm label { font-size:13px; color:var(--muted); display:flex; align-items:center; gap:8px; }
+    .hint { font-size:12px; color:var(--muted); margin-top:8px; }
+
+    .hidden { display:none !important; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <!-- 一覧画面 -->
+    <div id="listBar" class="bar">
+      <span id="dot" class="dot off"></span>
+      <span id="connText" class="grow">未接続</span>
+      <button id="notifyBtn" title="通知を有効化" style="display:none">🔔</button>
+      <button id="refreshBtn" title="更新">⟳</button>
+    </div>
+    <div id="listView">
+      <div id="rows"></div>
+      <div id="empty">セッションがありません。<br>下のボタンで新規作成できます。</div>
+    </div>
+    <div id="newBar">
+      <button data-preset="claude" class="newBtn">＋ claude</button>
+      <button data-preset="bash" class="newBtn">＋ bash</button>
+    </div>
+
+    <!-- 端末画面 -->
+    <div id="termView">
+      <div class="bar">
+        <button id="backBtn">‹ 一覧</button>
+        <span id="termTitle" class="grow"></span>
+        <span id="termBadge" class="badge idle">-</span>
+      </div>
+      <div id="term"></div>
+      <div id="keybar">
+        <button data-key="enter">⏎</button>
+        <button data-key="up">↑</button>
+        <button data-key="down">↓</button>
+        <button data-key="left">←</button>
+        <button data-key="right">→</button>
+        <button data-key="esc">Esc</button>
+        <button data-key="tab">Tab</button>
+        <button id="ctrlBtn" data-key="ctrl">Ctrl</button>
+        <button data-key="c-c">^C</button>
+        <span id="customKeys"></span>
+        <button id="addKeyBtn" title="ショートカットを追加">＋</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ショートカット管理(ボトムシート) -->
+  <div id="modal">
+    <div class="sheet">
+      <div class="sheetHead"><span class="grow">ショートカット管理</span><button id="modalClose">閉じる</button></div>
+      <div id="customList"></div>
+      <div class="addForm">
+        <input type="text" id="kLabel" placeholder="ラベル(例: gs)" maxlength="14" />
+        <input type="text" id="kText" placeholder="送信内容(例: git status)" />
+        <label><input type="checkbox" id="kEnter" checked /> 末尾でEnterを送る</label>
+        <button id="kAdd">追加する</button>
+        <div class="hint">\n=改行 \t=Tab \e=Esc も使えます(制御シーケンス向け)。</div>
+      </div>
+    </div>
+  </div>
+
+  <script src="vendor/xterm.min.js"
+    integrity="sha384-J4qzUjBl1FxyLsl/kQPQIOeINsmp17OHYXDOMpMxlKX53ZfYsL+aWHpgArvOuof9"></script>
+  <script src="vendor/addon-fit.min.js"
+    integrity="sha384-XGqKrV8Jrukp1NITJbOEHwg01tNkuXr6uB6YEj69ebpYU3v7FvoGgEg23C1Gcehk"></script>
+  <!-- libsodium 自己完結ブラウザ版(onload コールバック方式)。読み込み前に受け皿を用意。 -->
+  <script>window.__sodiumReady = new Promise((res) => { window.sodium = { onload: (s) => res(s) }; });</script>
+  <script src="vendor/sodium.js"
+    integrity="sha384-80nH8cbwibyXVHJqGj+El9K3V5iRV491XuUvgqa2Y7KhNHFh2Lr/3IMa+NHD8661"></script>
+  <script>
+  (function () {
+    const PROTOCOL_VERSION = 1;
+    const $ = (id) => document.getElementById(id);
+
+    // ── 状態 ──
+    const sessions = new Map(); // id -> SessionMeta
+    let currentId = null;       // 端末表示中の sessionId(null=一覧)
+    let ws = null;
+
+    // ── xterm ──
+    const term = new Terminal({ cursorBlink: true, fontSize: 14, theme: { background: "#1e1e1e" } });
+    const fit = new FitAddon.FitAddon();
+    term.loadAddon(fit);
+    term.open($("term"));
+    // Ctrl トグルが armed のとき、ソフトキーボードで打った次の1文字を制御コードに変換する
+    // (例: 'c' → Ctrl-C=\x03)。@..._ / A..Z / a..z を 0x1f マスクで制御文字化。
+    let ctrlArmed = false;
+    function disarmCtrl() { ctrlArmed = false; $("ctrlBtn").classList.remove("armed"); }
+    term.onData((data) => {
+      if (!currentId) return;
+      if (ctrlArmed && data.length) {
+        const code = data[0].toUpperCase().charCodeAt(0);
+        if (code >= 64 && code <= 95) data = String.fromCharCode(code & 0x1f) + data.slice(1);
+        disarmCtrl();
+      }
+      sendMsg({ t: "input", sessionId: currentId, data });
+    });
+
+    // キーバー: 特殊キーを直接 input として送る(端末フォーカス/ソフトキーボード不要)
+    const KEYSEQ = { esc: "\x1b", tab: "\t", up: "\x1b[A", down: "\x1b[B",
+      left: "\x1b[D", right: "\x1b[C", enter: "\r", "c-c": "\x03" };
+
+    // ── ユーザー定義ショートカット(端末=このブラウザにローカル保存)──
+    const CUSTOM_KEY = "ar_custom_keys_v1";
+    function loadCustom() {
+      try { const a = JSON.parse(localStorage.getItem(CUSTOM_KEY) || "[]"); return Array.isArray(a) ? a : []; }
+      catch { return []; }
+    }
+    function saveCustom(list) { localStorage.setItem(CUSTOM_KEY, JSON.stringify(list)); }
+    // \n=CR, \t=Tab, \e=ESC, \\=バックスラッシュ を解釈。enter で末尾にCRを付す。
+    function buildSeq(text, enter) {
+      let s = String(text).replace(/\\([nte\\])/g, (_, c) =>
+        c === "n" ? "\r" : c === "t" ? "\t" : c === "e" ? "\x1b" : "\\");
+      if (enter) s += "\r";
+      return s;
+    }
+    let customKeys = loadCustom();
+    function renderCustomKeys() {
+      const box = $("customKeys");
+      box.innerHTML = "";
+      customKeys.forEach((it, i) => {
+        const b = document.createElement("button");
+        b.className = "custom";
+        b.dataset.custom = String(i);
+        b.textContent = it.label;
+        box.appendChild(b);
+      });
+    }
+
+    $("keybar").addEventListener("click", (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      if (btn.id === "addKeyBtn") { openModal(); return; }
+      if (!currentId) return;
+      if (btn.dataset.custom !== undefined) {
+        const it = customKeys[+btn.dataset.custom];
+        if (it) sendMsg({ t: "input", sessionId: currentId, data: buildSeq(it.text, it.enter) });
+        return;
+      }
+      const k = btn.dataset.key;
+      if (k === "ctrl") {
+        ctrlArmed = !ctrlArmed;
+        btn.classList.toggle("armed", ctrlArmed);
+        if (ctrlArmed) term.focus(); // 次の1文字を拾うためキーボードを出す
+        return;
+      }
+      if (KEYSEQ[k] !== undefined) sendMsg({ t: "input", sessionId: currentId, data: KEYSEQ[k] });
+    });
+
+    // ── ショートカット管理シート ──
+    function openModal() { renderCustomList(); $("modal").classList.add("show"); }
+    function closeModal() { $("modal").classList.remove("show"); }
+    function renderCustomList() {
+      const list = $("customList");
+      list.innerHTML = "";
+      customKeys.forEach((it, i) => {
+        const row = document.createElement("div");
+        row.className = "crow";
+        row.innerHTML = '<span class="clabel"></span><span class="cval"></span><button class="del" data-del="' + i + '">削除</button>';
+        row.querySelector(".clabel").textContent = it.label;
+        row.querySelector(".cval").textContent = it.text + (it.enter ? " ⏎" : "");
+        list.appendChild(row);
+      });
+    }
+    $("modalClose").addEventListener("click", closeModal);
+    $("modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+    $("customList").addEventListener("click", (e) => {
+      const b = e.target.closest("button[data-del]");
+      if (!b) return;
+      customKeys.splice(+b.dataset.del, 1);
+      saveCustom(customKeys); renderCustomList(); renderCustomKeys();
+    });
+    $("kAdd").addEventListener("click", () => {
+      const label = $("kLabel").value.trim();
+      const text = $("kText").value;
+      if (!label || !text) return;
+      customKeys.push({ label, text, enter: $("kEnter").checked });
+      saveCustom(customKeys); renderCustomList(); renderCustomKeys();
+      $("kLabel").value = ""; $("kText").value = ""; $("kEnter").checked = true;
+      $("kLabel").focus();
+    });
+
+    renderCustomKeys();
+
+    // ── 接続情報(ペアリングQRのクエリ)──
+    //   ?relay=wss://<worker>.workers.dev&room=<id>&hpk=<host公開鍵>&ps=<ペアリング秘密>
+    // hpk/ps があれば E2EE、無ければ平文(ローカル簡易リレー)にフォールバック。
+    const params = new URLSearchParams(location.search);
+    const room = params.get("room") || "default-room";
+    const relayBase = (params.get("relay") || ((location.protocol === "https:" ? "wss://" : "ws://") + location.host))
+      .replace(/\/+$/, "");
+    const hpkParam = params.get("hpk");
+    const psParam = params.get("ps");
+    const wantE2ee = !!(hpkParam && psParam);
+    const wsUrl = `${relayBase}/ws?room=${encodeURIComponent(room)}&role=client`;
+
+    // ── E2EE 状態(host の e2ee.ts と対の実装)──
+    let sodium = null;      // libsodium(ready後)
+    let clientKp = null;    // {publicKey, privateKey}
+    let hostPk = null, pairingSecret = null;
+    let keys = null;        // {rx, tx} 確立後
+    const B64 = (u) => sodium.to_base64(u, sodium.base64_variants.URLSAFE_NO_PADDING);
+    const UNB64 = (s) => sodium.from_base64(s, sodium.base64_variants.URLSAFE_NO_PADDING);
+    function seal(value) {
+      const nonce = sodium.randombytes_buf(sodium.crypto_secretbox_NONCEBYTES);
+      const cipher = sodium.crypto_secretbox_easy(sodium.from_string(JSON.stringify(value)), nonce, keys.tx);
+      return { t: "enc", n: B64(nonce), c: B64(cipher) };
+    }
+    function openEnv(env) {
+      try {
+        const plain = sodium.crypto_secretbox_open_easy(UNB64(env.c), UNB64(env.n), keys.rx);
+        return JSON.parse(sodium.to_string(plain));
+      } catch { return undefined; }
+    }
+
+    // app メッセージ送信: 鍵確立後は暗号封筒、未確立なら平文
+    const sendMsg = (payload) => {
+      if (!ws || ws.readyState !== 1) return;
+      const p = keys ? seal(payload) : payload;
+      ws.send(JSON.stringify({ t: "msg", payload: p }));
+    };
+
+    function setConn(text, on) {
+      $("connText").textContent = text;
+      $("dot").className = "dot " + (on ? "on" : "off");
+    }
+
+    function connect() {
+      setConn("接続中…", false);
+      keys = null; // 再接続で鍵交換をやり直す
+      ws = new WebSocket(wsUrl);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ t: "hello", role: "client" }));
+        if (wantE2ee) {
+          // 鍵交換要求(平文): 自分の公開鍵 + ペアリング証明
+          const proof = sodium.crypto_generichash(32,
+            concat(clientKp.publicKey, hostPk), pairingSecret);
+          setConn("鍵交換中…", false);
+          ws.send(JSON.stringify({ t: "msg", payload: {
+            t: "kx.hello", pub: B64(clientKp.publicKey), proof: B64(proof),
+          }}));
+        } else {
+          setConn("接続済み(平文)", true);
+          sendMsg({ t: "client.hello", protocol: PROTOCOL_VERSION });
+          sendMsg({ t: "session.list.request" });
+        }
+      };
+      ws.onclose = () => { setConn("切断(再接続します)", false); setTimeout(connect, 2000); };
+      ws.onerror = () => setConn("エラー", false);
+      ws.onmessage = (ev) => {
+        let env; try { env = JSON.parse(ev.data); } catch { return; }
+        if (env.t !== "msg") return;
+        const p = env.payload;
+        // 鍵交換応答
+        if (p && p.t === "kx.ack") { onKxAck(); return; }
+        if (p && p.t === "kx.reject") { setConn("ペアリング拒否(秘密不一致)", false); return; }
+        // 暗号封筒 → 復号
+        if (p && p.t === "enc") { if (keys) { const inner = openEnv(p); if (inner) handle(inner); } return; }
+        // 平文 app(E2EE不要時のみ)
+        if (!wantE2ee) handle(p);
+      };
+    }
+
+    function onKxAck() {
+      keys = deriveClientKeys(clientKp, hostPk);
+      setConn("接続済み(E2EE)", true);
+      sendMsg({ t: "client.hello", protocol: PROTOCOL_VERSION });
+      sendMsg({ t: "session.list.request" });
+    }
+    function deriveClientKeys(kp, hostPub) {
+      const k = sodium.crypto_kx_client_session_keys(kp.publicKey, kp.privateKey, hostPub);
+      return { rx: k.sharedRx, tx: k.sharedTx };
+    }
+    function concat(a, b) { const u = new Uint8Array(a.length + b.length); u.set(a, 0); u.set(b, a.length); return u; }
+
+    let vapidPublicKey = null;
+    function handle(m) {
+      switch (m.t) {
+        case "host.hello":
+          // push 対応なら通知ボタンを出す
+          if (m.features && m.features.push && m.vapidPublicKey && "serviceWorker" in navigator && "PushManager" in window) {
+            vapidPublicKey = m.vapidPublicKey;
+            document.getElementById("notifyBtn").style.display = "";
+          }
+          break;
+        case "session.list":
+          sessions.clear();
+          for (const s of m.sessions) sessions.set(s.id, s);
+          renderList();
+          reconcileCurrent();
+          break;
+        case "session.added":
+          sessions.set(m.session.id, m.session); renderList(); break;
+        case "session.updated":
+          sessions.set(m.session.id, m.session);
+          renderList();
+          if (m.session.id === currentId) updateTermBadge();
+          break;
+        case "session.removed":
+          sessions.delete(m.sessionId); renderList();
+          if (m.sessionId === currentId) backToList();
+          break;
+        case "snapshot":
+          if (m.sessionId === currentId) { term.clear(); term.write(m.data); }
+          break;
+        case "output":
+          if (m.sessionId === currentId) term.write(m.data);
+          break;
+        case "exit":
+          if (m.sessionId === currentId) term.write("\r\n[セッション終了 code=" + m.code + "]\r\n");
+          break;
+        case "error":
+          if (currentId) term.write("\r\n[エラー " + m.code + "] " + m.message + "\r\n");
+          else setConn("エラー: " + m.code, false);
+          break;
+      }
+    }
+
+    // 再接続で currentId のセッションがまだ存在すれば再購読
+    function reconcileCurrent() {
+      if (currentId && sessions.has(currentId)) {
+        sendMsg({ t: "session.subscribe", sessionId: currentId });
+      } else if (currentId && !sessions.has(currentId)) {
+        backToList();
+      }
+    }
+
+    // ── 一覧描画 ──
+    function iconFor(s) { return s.kind === "agent" ? "🤖" : "💻"; }
+    function renderList() {
+      const rows = $("rows");
+      rows.innerHTML = "";
+      const list = [...sessions.values()].sort((a, b) => a.createdAt - b.createdAt);
+      $("empty").classList.toggle("hidden", list.length > 0);
+      for (const s of list) {
+        const row = document.createElement("div");
+        row.className = "row";
+        row.innerHTML =
+          '<div class="icon">' + iconFor(s) + '</div>' +
+          '<div class="meta"><div class="title"></div><div class="sub"></div></div>' +
+          '<span class="badge ' + s.status + '">' + statusLabel(s.status) + '</span>';
+        row.querySelector(".title").textContent = s.title;
+        row.querySelector(".sub").textContent = s.kind + " · " + s.id;
+        row.addEventListener("click", () => openSession(s.id));
+        rows.appendChild(row);
+      }
+    }
+    function statusLabel(st) {
+      return st === "running" ? "実行中" : st === "waiting-input" ? "入力待ち"
+        : st === "exited" ? "終了" : "待機";
+    }
+
+    // ── 画面遷移 ──
+    function openSession(id) {
+      currentId = id;
+      const s = sessions.get(id);
+      $("termTitle").textContent = s ? s.title : id;
+      updateTermBadge();
+      $("listBar").classList.add("hidden");
+      $("listView").classList.add("hidden");
+      $("newBar").classList.add("hidden");
+      $("termView").style.display = "flex";
+      term.clear();
+      sendMsg({ t: "session.subscribe", sessionId: id });
+      // レイアウト確定後に fit
+      setTimeout(() => { fit.fit(); sendResize(); term.focus(); }, 50);
+    }
+    function backToList() {
+      if (currentId) sendMsg({ t: "session.unsubscribe", sessionId: currentId });
+      currentId = null;
+      $("termView").style.display = "none";
+      $("listBar").classList.remove("hidden");
+      $("listView").classList.remove("hidden");
+      $("newBar").classList.remove("hidden");
+      renderList();
+    }
+    function updateTermBadge() {
+      const s = sessions.get(currentId);
+      const badge = $("termBadge");
+      const st = s ? s.status : "idle";
+      badge.className = "badge " + st;
+      badge.textContent = statusLabel(st);
+      if (s) $("termTitle").textContent = s.title;
+    }
+
+    function sendResize() {
+      if (currentId) sendMsg({ t: "resize", sessionId: currentId, cols: term.cols, rows: term.rows });
+    }
+    window.addEventListener("resize", () => { if (currentId) { fit.fit(); sendResize(); } });
+
+    // ソフトキーボード表示中もキーバーを可視域の底に留める。
+    // iOS等では layout viewport はキーボードで縮まないため、visualViewport の
+    // 高さ/オフセットに #app を合わせてピン留めし、キーバーがキーボード下に隠れないようにする。
+    const vv = window.visualViewport;
+    if (vv) {
+      const app = $("app");
+      const applyViewport = () => {
+        app.style.height = vv.height + "px";
+        app.style.transform = "translateY(" + vv.offsetTop + "px)";
+        if (currentId) { fit.fit(); sendResize(); }
+      };
+      vv.addEventListener("resize", applyViewport);
+      vv.addEventListener("scroll", applyViewport);
+      applyViewport();
+    }
+
+    // ── 操作 ──
+    $("backBtn").addEventListener("click", backToList);
+    $("refreshBtn").addEventListener("click", () => sendMsg({ t: "session.list.request" }));
+    $("notifyBtn").addEventListener("click", enablePush);
+
+    // ── Web Push 購読 ──
+    function urlB64ToU8(b64s) {
+      const pad = "=".repeat((4 - (b64s.length % 4)) % 4);
+      const s = (b64s + pad).replace(/-/g, "+").replace(/_/g, "/");
+      const raw = atob(s);
+      return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+    }
+    async function enablePush() {
+      try {
+        if (!vapidPublicKey) return;
+        const perm = await Notification.requestPermission();
+        if (perm !== "granted") { setConn("通知が許可されませんでした", true); return; }
+        const reg = await navigator.serviceWorker.register("sw.js");
+        await navigator.serviceWorker.ready;
+        let sub = await reg.pushManager.getSubscription();
+        if (!sub) {
+          sub = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlB64ToU8(vapidPublicKey),
+          });
+        }
+        sendMsg({ t: "push.subscribe", subscription: sub.toJSON() });
+        $("notifyBtn").textContent = "🔔✓";
+        setConn($("connText").textContent.replace(/ ?\(通知.*\)/, "") + " (通知ON)", true);
+      } catch (e) {
+        setConn("通知の有効化に失敗: " + (e && e.message ? e.message : e), false);
+      }
+    }
+    for (const b of document.querySelectorAll(".newBtn")) {
+      b.addEventListener("click", () => sendMsg({ t: "session.create", preset: b.dataset.preset }));
+    }
+
+    // ── 起動: E2EE 時は libsodium 初期化+鍵生成してから接続 ──
+    (async function boot() {
+      if (wantE2ee) {
+        setConn("暗号初期化中…", false);
+        sodium = await window.__sodiumReady; // onload で解決(libsodiumモジュール)
+        clientKp = sodium.crypto_kx_keypair();
+        hostPk = UNB64(hpkParam);
+        pairingSecret = UNB64(psParam);
+      }
+      connect();
+    })();
+  })();
+  </script>
+</body>
+</html>

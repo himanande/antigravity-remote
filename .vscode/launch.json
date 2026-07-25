@@ -1,0 +1,15 @@
+{
+  // Antigravity/VS Code で F5 を押すと、この拡張を読み込んだ
+  // 「拡張機能開発ホスト」ウィンドウが起動する。
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "拡張機能を起動 (Antigravity Remote)",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
+      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "preLaunchTask": "npm: build"
+    }
+  ]
+}

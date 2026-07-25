@@ -1,0 +1,153 @@
+# tasks.md — タスク管理・進捗共有ボード
+
+複数エージェントの**単一の進捗共有窓口**。作業を始める前にここで担当を宣言し(status と owner を更新してコミット)、終わったら結果と根拠リンクを書く。詳しい運用は [collaboration.md](./collaboration.md)。
+
+- **status**: `TODO` / `WIP`(着手中) / `BLOCKED` / `REVIEW`(レビュー待ち) / `DONE`
+- **owner**: 空=未割当。着手時に自分のエージェント名を書く(例 `claude-fable`, `gemini`, `human:ike3`)
+- **id は不変**。依存は `deps` に id で書く。完了時は `結果` 行に成果物パス/コミット/根拠を残す。
+
+凡例: 🔴優先度高 🟡中 🟢低
+
+---
+
+## フェーズ0 — 縦切りPoC(目標: 遠隔操作が成立することの証明)
+
+### TASK-01 🔴 リポジトリ初期化と開発足場
+- status: DONE / owner: claude-fable / deps: —
+- 内容: git init、docs 一式、拡張機能スケルトン(package.json / tsconfig / esbuild)、README。
+- 結果: docs/ 一式作成。拡張スケルトンは TASK-02 で追加。
+
+### TASK-02 🔴 拡張機能スケルトン(Antigravityで起動確認)
+- status: REVIEW / owner: claude-fable / deps: TASK-01
+- 内容: 最小の VS Code 拡張(activate で `console.log`+コマンド1個)を作り、Antigravity で F5 デバッグ起動 or VSIX インストールして動くことを確認。
+- 進捗: 拡張スケルトン実装済み(src/extension.ts ほか)、esbuild バンドル+`tsc --noEmit` 通過(findings F6)。
+- 残: **人間 or GUI操作でAntigravity上のロード確認が必要**(CLIからGUI IDEを起動できないため)。手順は docs/phase0-howto.md。node-pty の `npm run rebuild-pty`(Electron 39 ABI)も未実施。
+- 完了条件: Antigravity 上で拡張のコマンドが実行できる。
+
+### TASK-03 🔴 node-pty セッションのホスト
+- status: DONE / owner: claude-fable / deps: TASK-02
+- 内容: 拡張内で node-pty により PTY を起動(プリセットコマンド、まずは `bash`/`claude`)。入出力を拡張内でハンドリング。
+- 結果: src/pty.ts(PtySession、scrollback保持、プリセット制)。node-pty で bash PTY を spawn し双方向I/O成立を確認(findings F6)。完了条件を満たす。
+
+### TASK-04 🔴 簡易リレー+スマホ xterm.js クライアント(LAN内)
+- status: DONE / owner: claude-fable / deps: TASK-03
+- 内容: 最小 WebSocket リレー(ローカルNode or Cloudflare Tunnel)経由で、スマホブラウザの xterm.js と TASK-03 の PTY を双方向接続。E2EE/ペアリングなしでよい。
+- 結果: リレー(relay/server.js+logic.js)、スマホクライアント(client/index.html)、ホスト代役(scratch-host.js)。**2026-07-18 実機スマホで往復成立を確認**(findings F7)。データ経路の完了条件クリア。
+- 残(別タスク化): 完了条件の「Claude Code で1タスク完走」は preset=claude で追試 → TASK-07 へ。
+
+### TASK-05 🔴 内部コマンド `sendPromptToAgentPanel` の引数実測
+- status: TODO(コード準備済) / owner: — / deps: TASK-02
+- 内容: 拡張から `vscode.commands.getCommands(true)` で `antigravity.*` の存在確認 → `executeCommand('antigravity.sendPromptToAgentPanel', <試行引数>)` を段階的に試し、**プロンプト本文が Agent Manager に届く引数形**を特定。承認系(`command.accept` 等)も併せて確認。
+- 完了条件: スマホ入力を Agent Manager に届けられる(v0.2 フェーズ0 完了条件②)。結果を [findings.md](./findings.md) F3 に追記(引数仕様)。
+- 進捗: 存在確認コマンド `antigravityRemote.probeAgentCommands` を実装済み(src/extension.ts、副作用なしで getCommands と突合)。実行は拡張をAntigravityにロード後(TASK-02残)。
+- 注意: ⚠️ executeCommand による引数実測はユーザーの稼働中エージェントに副作用。空の会話/専用ワークスペースで検証すること。
+
+### TASK-07 🔴 スマホから Claude Code を操作して1タスク完走(実機)
+- status: TODO / owner: — / deps: TASK-04
+- 内容: `node scratch-host.js claude` でホスト役を Claude Code CLI にし、スマホから許可プロンプトに応答して1タスク完走させる(v0.2 フェーズ0 完了条件②の実機確認)。
+- 完了条件: スマホ操作だけで Claude Code が1タスク完了。結果を findings に追記。
+
+### TASK-06 🟡 コスト・基盤試算(リレー選定の材料)
+- status: TODO / owner: — / deps: TASK-04
+- 内容: Cloudflare Workers+Durable Objects と常駐サーバ(Fly.io等)で、WSS常時接続・帯域のコストを試算。ADR-005 として decisions に起票。
+- 完了条件: 数値付き比較表と推奨が decisions に載る。
+
+---
+
+## フェーズ1 — MVP(自分専用・マルチセッション対応)
+目標: 外出先の回線から・安全に(E2EE)・複数セッションを一覧して並行操作。要件は requirements v0.3、多重化方針は decisions ADR-005。
+
+### TASK-10 🔴 プロトコルにマルチセッション導入(sessionId+制御メッセージ)
+- status: DONE / owner: claude-fable / deps: TASK-04
+- 内容: src/protocol.ts を拡張。全 I/O メッセージに `sessionId`。制御メッセージ追加: `session.list`(host→client)/`session.create`(client→host, preset指定)/`session.close`/`session.subscribe`(client→host)/`session.snapshot`(host→client, scrollback)。Session メタ型(id/kind/title/status/…)を定義。
+- 結果: src/protocol.ts を全面刷新。3層(RelayEnvelope不透明 / ClientToHost・HostToClient / SessionMeta)、PROTOCOL_VERSION=1、AgentStep/HostFeatures/HostErrorCode、agent.* は実験用に予約。relayClient.ts/extension.ts/client/index.html/scratch-host.js を新プロトコルに追従(単一セッション橋渡し=sessionId "main"、TASK-11で置換)。`tsc --noEmit` 通過、scratch-e2e.js で list→subscribe→input→output の多重化往復 PASS。リレー(logic.js)は payload 非解釈のまま。
+
+### TASK-11 🔴 SessionManager(ホスト側多重化)
+- status: DONE / owner: claude-fable / deps: TASK-10
+- 内容: 拡張内に SessionManager を実装。複数 PtySession を id 管理、`sessions` 一覧を維持・更新、sessionId で入出力を多重化して RelayClient に流す。バックグラウンドセッションも実行継続+scrollback 保持(FR-2.6/2.7)。
+- 結果: src/sessionManager.ts(create/close/write/resize/snapshot/list、onData/onExit/onMeta を sessionId 付きで通知)。RelayClient を Manager 駆動に刷新(購読集合管理、出力は購読中のみ中継、session.create/close/subscribe対応)。extension.ts に newSession コマンド追加。scratch-multisession.ts で **2本同時・一覧2件・subscribeスコープ・混線なし** を実証(findings F8)。tsc・build通過。完了条件クリア。
+
+### TASK-12 🔴 スマホUI: セッション一覧+切替
+- status: DONE / owner: claude-fable / deps: TASK-10
+- 内容: client を一覧画面+個別ビューの2画面に。`session.list` を表示、タップで subscribe、新規作成(preset)、戻る。status バッジ。pty は xterm、agent は後続(TASK-2x)。
+- 結果: client/index.html を2画面SPAに刷新(一覧=icon/title/kind·id/statusバッジ、増分 added/updated/removed 反映、＋claude/＋bash で session.create、行タップで subscribe→端末、‹一覧 で unsubscribe→戻る、再接続で currentId 再購読)。Playwright で 一覧2件化・切替・入力ルーティング・戻る を実証(findings F9、docs/images/)。完了条件クリア。
+
+### TASK-13 🔴 ペアリング(QR+鍵交換)とアプリ層E2EE
+- status: DONE / owner: claude-fable / deps: TASK-10
+- 内容: 拡張がワンタイムQR/URL(公開鍵+有効期限)を発行、スマホで読み取り鍵交換(libsodium)。以後 payload(sessionId等の制御メタ含む)をE2EE。デバイス一覧・失効・キルスイッチ(FR-1)。
+- 結果: src/e2ee.ts(X25519 crypto_kx+crypto_secretbox+ペアリングproof)、src/pairing.ts(鍵/秘密生成+QR URL組立)、extension の `pair` コマンド(QR webview表示)、RelayClient に kx ハンドシェイク+封筒暗号を統合(ペアリング有時は平文app拒否)、client にlibsodiumでclient側kx。Node コア全項目PASS+ブラウザ↔ホストで「接続済み(E2EE)」→暗号越しに session.list→echo実行を実証(findings F11、docs/images/task13-e2ee-connected.png)。
+- 残(後続): デバイス一覧UI・個別失効・キルスイッチ(FR-1.3/1.4)、有効期限、複数client同時のper-connection鍵は未対応(単一client想定)。→ フェーズ2/3で拡張。
+- 完了条件(コア): 未ペアリング/不正secret端末は kx.reject で操作不可、ペアリング済みのみE2EEで操作可 = 達成。
+
+### TASK-14 🔴 クラウドリレー本実装(Cloudflare Workers + Durable Objects)
+- status: REVIEW / owner: claude-fable / deps: TASK-10
+- 内容: フェーズ0の簡易リレーを Cloudflare DO ベースに。テナント=1 DO に host+client 群を集約、WSS 中継、payload 非解釈(ゼロナレッジ)。再接続・複数クライアント対応。
+- 結果: relay-cf/(worker.ts=fetch+RelayRoom DO、wrangler.toml、README)。Hibernatable WebSockets、room→DO集約(idFromName)、host1+clientN 中継。`wrangler dev` ローカルで多重化往復を実証(findings F10)。ホスト/スマホ/設定を room+role 配線(relayUrl+room 設定、client は ?relay=&room= を読む)。tsc・build通過。
+- 残: **実デプロイ(`wrangler deploy`=Cloudflare認証が必要)とモバイル回線からの実到達確認**は人間 ike3 が実施(relay-cf/README の手順)。それが済めば DONE。
+- 完了条件: 外出先回線(モバイル)からホストに到達し操作できる。
+
+### TASK-15 🟡 再接続・scrollback 再送のマルチセッション対応
+- status: DONE / owner: claude-fable / deps: TASK-11, TASK-14
+- 内容: 切断→再接続時に、購読中セッションの scrollback を session.snapshot で再送。全セッションのメタも再同期。
+- 結果: 既存機構で成立(host が session+scrollback 保持、client が再接続時に session.list 再同期+currentId 再購読、host が subscribe で snapshot 再送)。scratch-reconnect-test で 切断前+切断中の出力の両方が復元されることを実証(findings F13)。追加実装不要。
+
+### TASK-17 🟡 キルスイッチ+ペアリング失効(FR-1.4 / FR-1.3 revoke-all)
+- status: DONE / owner: claude-fable / deps: TASK-13
+- 内容: 全リモート接続を即時遮断し、既存ペアリングを失効する。ローカルセッションは継続。
+- 結果: extension の `killRemote` コマンド(relay dispose + pairing破棄、ローカル継続)。scratch-kill-test で client 切断(peer-left)を実証(F13)。粒度別の個別デバイス失効(FR-1.3)は per-connection識別が必要で未対応→revoke-all(鍵ローテーション=再ペアリング)で代替。
+
+### TASK-16 🟡 Web Push 通知(セッション識別込み)
+- status: REVIEW / owner: claude-fable / deps: TASK-12
+- 内容: pty 入力待ち/agent 新規ステップで通知。どのセッションかを含める。iOS はPWAホーム追加時のみ(ガイド)。
+- 結果: src/push.ts(VAPID鍵生成+web-push送信、失効処理)、SessionManager に waiting-input 検出(promptPatterns、既定はClaude Code等の確認プロンプト)、RelayClient に push トリガ(非表示セッションが入力待ち→送信)+ host.hello で VAPID公開鍵告知+push.subscribe受付、client に SW(sw.js)・manifest・通知ボタン・購読処理、extension で VAPID鍵をglobalState永続化+enablePush/promptPatterns設定。ホスト連鎖(検出→web-push暗号化POST)をNodeで実証、client の SW登録/manifest/ボタンをPlaywrightで確認(findings F12)。tsc・build通過。
+- 残: **実端末での購読(pushManager.subscribe)+実配信は実push服务が必要**(人間、TASK-14デプロイと同様)。agent新規ステップ通知はフェーズ2(ミラー実装時)。
+- 完了条件: バックグラウンドセッションの入力待ち→push送信まで実証済。実配信の実機確認が残。
+
+## フェーズ2以降(バックログ)
+- 会話DBウォッチャ+ミラービュー(B)を一覧に統合(history-keeper と共通ライブラリ化を検討)
+- 内部コマンドブリッジ本実装(FR-6、監査ログ・レート制限)
+- NFR-8: マルチセッションのバックプレッシャ/出力レート制御
+- Open VSX 公開・規約整備・導入ドキュメント
+- マルチホスト(複数PC)対応(フェーズ4)
+
+---
+## リリースフェーズ(TASK-21〜、ADR-006/007)
+段階戦略: **Stage1=無料OSSローンチで母数獲得 → Stage2=マネージド運用**。Stage2の詳細(価格・原価・条件)は非公開ドキュメントで管理する。
+
+### Stage 0: 公開前ブロッカー(これが無いと配れない)
+- **TASK-21 [P0] node-pty配布問題の解決**: status: REVIEW / owner: claude-opus / deps: —
+  - **スパイク結論(2026-07-25、F16)**: 前提が誤りだった。node-pty 1.1.0 は **Node-API(N-API)実装でABI安定**なので、**Electron世代ごとのビルドは不要**。必要なのは plat-arch ごとのバイナリ同梱のみ。Antigravity が Electron を上げても再ビルド不要。
+  - 実装済: `scripts/prepare-native.js`(`dist/node_modules/node-pty` に lib+prebuilds を集約、*.pdb 53MB を除外)、`.vscodeignore`、`npm run package`、macOS spawn-helper の chmod フォールバック(`src/pty.ts`)、`.github/workflows/build-vsix.yml`。
+  - 実測: **.vsix 2.62MB / darwin×2・win32×2・linux-x64 同梱**。展開して PTY 起動成功。
+  - 残(完了条件): ① CI を回して **linux-x64/arm64 を古いglibc(bullseye 2.31)でビルド**(開発機ビルドは GLIBC_2.42 要求で他ディストロ不可)。② **Windows/macOS 実機での起動確認**(手元に環境が無いためユーザー or ベータ配布で検証)。
+- **TASK-22 [P0] DoS/レート制限**: room単位・IP単位の接続レート制限をリレー(worker)に追加。公開直後の悪用対策。
+- **TASK-23 [P0] 公開整備(拡張)**: publisher/icon/README/CHANGELOG/**LICENSE(OSS)**/プライバシーポリシー。
+
+### Stage 1: 無料OSSローンチ
+- **TASK-24 [P1] 拡張 Open VSX 公開**: vsce package→publish。node-pty(TASK-21)前提。
+- **TASK-25 [P1] PWA公開品質化**: アイコン各サイズ・manifest整備・apple-touch-icon・簡易オフライン。
+- **TASK-26 [P1] TWA→Play Store**: Bubblewrap・**assetlinks.json**(worker配信ドメインに設置)・署名鍵・掲載物(説明/スクショ/プライバシー)・$25登録。
+- **TASK-27 [P1] 軽量テレメトリ**: メッセージ件数・接続時間のみ計測(内容は送らずE2EE維持)。実原価検証+後の計測基盤。
+
+### Stage 2: マネージド運用(ユーザーが付いてから)
+- TASK-28〜31。アカウント基盤・利用計測・マルチホスト・チーム/権限。**内容は非公開ロードマップで管理**(リポジトリ外)。
+
+### 保留(需要次第)
+- iOS App Store ラッパー(ADR-006、Apple審査・$99/年)。
+- フェーズ2 Agent Managerミラー/内部コマンド操作(競合と同じ土俵。差別化が固まってから判断)。
+
+### 進捗ログ(新しいものを上に)
+- 2026-07-25 claude-opus: **TASK-21 スパイク完了 → 最大の技術難所は消滅**。node-pty 1.1.0 が **N-API実装でABI安定**であることを実証(electron-rebuild 産バイナリが素のNodeで動く)。よって「Electron世代マトリクス」「起動時rebuild」は不要で、plat-arch同梱だけでよい。`scripts/prepare-native.js` + `.vscodeignore` + `npm run package` で **.vsix 2.62MB(5プラットフォーム)** を生成し、展開→PTY起動まで確認。Windows prebuilds の *.pdb 53MB 除外が効いた。⚠️Linuxは公式prebuild無し&開発機ビルドは GLIBC_2.42 要求のため、`.github/workflows/build-vsix.yml`(node:20-bullseye)でCIビルドする方針(F16)。**次**: TASK-23(GitHubリポジトリ作成+repositoryフィールド+LICENSE/icon)→ CI実行 → TASK-22(レート制限)。
+- 2026-07-23 claude-opus: **TASK-20 PC⇄スマホ双方向同期 実装(→要実機確認)**。src/terminalMirror.ts の TerminalMirror で、ホストの各 node-pty を VS Code Pseudoterminal として PC ターミナルタブにも表示。同じptyを両画面が見るため入力/出力が双方向同期(handleInput→write、setDimensions→resize、close→session close)。SessionManagerはvscode非依存維持、結合はextension層(makeActive で manager+mirror 生成、stopSizeで dispose)。open前live抑止+open時scrollback再生で取りこぼし/重複なし、closingガードで二重close防止。tsc/build PASS、実動作は要実機(F15)。またユーザー要望で **TASK-18 キーバーにユーザー定義ショートカット**(＋→管理シート、localStorage永続、\n/\t/\e解釈)も追加済(Playwright検証)。**次**: 実機で双方向同期の確認。その後フェーズ2(Agent Managerミラー)or 公開準備(TWA/ストア)。
+- 2026-07-22 claude-opus: **実機通し確認 成功 + 製品化前セキュリティ対応 + キーバー**。①ユーザーがCloudflare実デプロイ(無料SQLite-DO)しスマホでQR→E2EE→PC操作まで到達(TASK-14実デプロイ相当クリア)。過程で worker に Workers Static Assets で client/ 同居配信を追加(1ドメイン完結、clientBaseUrl不要化)、F5用 .vscode/launch.json+tasks.json、node-pty rebuild。②ユーザーFB反映: **TASK-18 キーバー**(PWA下部に矢印/Esc/Tab/Ctrl/^C/⏎、Ctrlはトグル式で次1文字を制御コード化)を実装・Playwright検証・DONE。③**セキュリティ対応(TASK-19)**: room乱数化(generateRoomId、pairing毎に128bit)+依存の自己ホスト+SRI(xterm/libsodium を client/vendor/ に取り込み integrity付与)。tsc/build/Playwright PASS(F14)。**次**: ②既存セッション同期(Pseudoterminal で host pty を PC側ターミナルにも表示=双方向同期)=TASK-20。
+- 2026-07-20 claude-fable: **TASK-15 DONE + TASK-17(キルスイッチ/失効)DONE**。再接続はscrollback復元(切断前+切断中の出力)を実証、既存機構で成立。killRemoteコマンド(全リモート遮断+ペアリング失効、ローカル継続)を追加しclient切断を実証(F13)。**フェーズ1の自律実装分は完了**。残る人間タスク: ①Cloudflare実デプロイ(TASK-14) ②実push服务での通知配信(TASK-16) ③スマホ実機でのペアリング〜操作の通し確認。次の自律作業候補: フェーズ2(Agent Managerミラー/内部コマンド操作)。
+- 2026-07-20 claude-fable: **TASK-16 実装完了→REVIEW**。Web Push: src/push.ts(VAPID+web-push)、SessionManager に waiting-input 検出(promptPatterns)、RelayClient に push トリガ+VAPID告知+push.subscribe、client に SW/manifest/通知ボタン/購読、extension で VAPID永続化。ホスト連鎖(プロンプト検出→web-push暗号化POST)をNodeで実証、SW登録/manifest/ボタンをPlaywrightで確認(F12)。残は実push服务での実配信(人間)。**フェーズ1のタスク実装は一巡完了**(残: TASK-14/16の実デプロイ・実配信=人間、TASK-15再接続強化、FR-1.3/1.4 UI)。
+- 2026-07-19 claude-fable: **TASK-13 DONE**。アプリ層E2EE(libsodium: X25519 crypto_kx+secretbox)+QRペアリング(pairコマンド、webviewでQR表示)。RelayClientにkxハンドシェイク+封筒暗号統合、clientにlibsodium。Nodeコア全項目PASS、Playwrightで ブラウザ↔ホスト E2EE 実チャネル(接続済み(E2EE)→暗号越しsession.list→echo実行)を実証(F11)。libsodiumは gh/jedisct1/libsodium.js@0.7.15 のonload方式ビルドを採用。**フェーズ1の主要タスク(TASK-10〜16のうちコア)完了**。残: TASK-14実デプロイ(要Cloudflare認証)、TASK-15/16(再接続強化・Web Push)、FR-1.3/1.4(デバイス失効・キルスイッチUI)。
+- 2026-07-19 claude-fable: **TASK-14 実装完了→REVIEW**。relay-cf/ に Cloudflare Workers+Durable Objects リレー(RelayRoom、Hibernatable WebSockets、room→DO集約、host1+clientN中継、ゼロナレッジ)。wrangler dev ローカルで多重化往復を実証(findings F10)。ホスト/スマホ/拡張設定を room+role で配線。残は実デプロイ+モバイル実到達確認(要Cloudflare認証=人間)。**次**: TASK-13(ペアリング+E2EE)。
+- 2026-07-19 claude-fable: **TASK-12 DONE**。client/index.html を「一覧↔個別ビュー」2画面SPAに刷新(状態バッジ・増分更新・session.create・subscribe/unsubscribe・再接続再購読)。Playwright で s1→＋bashでs2追加→s2で echo 実行→戻る を実証(findings F9、docs/images/task12-*.png)。**次**: TASK-13(ペアリング+E2EE)/ TASK-14(Cloudflareリレー)。UIとバックエンドの多重化は一通り動く状態。
+- 2026-07-18 claude-fable: **TASK-11 DONE**。SessionManager(複数PtySessionをsessionIdで多重化、onData/onExit/onMeta通知)+ RelayClientをManager駆動に刷新(購読集合、出力は購読中セッションのみ中継=NFR-8基本バックプレッシャ)。extension に newSession コマンド追加。scratch-multisession.ts で 2本同時・一覧2件・subscribeスコープ・混線なし を実証(findings F8)。**次**: TASK-12(スマホ一覧UI)/ TASK-13(ペアリング+E2EE)/ TASK-14(Cloudflareリレー)を並行着手可能。
+- 2026-07-18 claude-fable: **TASK-10 DONE**。protocol.ts を sessionId 多重化+制御メッセージ(session.list/create/close/subscribe/snapshot)+SessionMeta/AgentStep/HostFeatures に刷新(PROTOCOL_VERSION=1)。既存の relayClient/extension/client/scratch-host を新プロトコルへ追従(暫定は単一セッション sessionId="main"、TASK-11 で SessionManager に置換)。tsc通過・scratch-e2e で多重化往復 PASS。**次**: TASK-11(SessionManager で複数pty多重化)/ TASK-12(一覧UI)を並行着手可能。
+- 2026-07-18 claude-fable: フェーズ1着手。要件を **v0.3 に改訂(マルチセッションを第一級要件に格上げ)**、v0.2 は superseded。ADR-005(ホスト側多重化+sessionId、リレーはセッション非解釈)を採択。フェーズ1を TASK-10〜16 に分解(protocol多重化→SessionManager→一覧UI→ペアリング/E2EE→Cloudflareリレー→再接続→通知)。推奨着手順は TASK-10→11/12 並行、TASK-13/14 は並行可能。
+- 2026-07-18 claude-fable: **実機スマホで往復成立を確認、TASK-04 DONE**(findings F7)。PC上で relay/server.js + scratch-host.js(bash)を起動し、スマホブラウザ(http://192.168.1.12:8787/)から入力→PTY→出力の往復を実機検証。拡張のF5ロード不要でシステムNodeのnode-ptyで実現。残ゴール「Claude Codeで1タスク完走」は TASK-07 に切り出し(preset=claudeで追試)。
+- 2026-07-18 claude-fable: フェーズ0の実装+ヘッドレス疎通確認まで完了。拡張スケルトン(src/)、リレー(relay/)、スマホクライアント(client/)を実装。scratch-e2e.js で 入力→PTY→出力→クライアント の往復を実証(findings F6)。TASK-03 DONE、TASK-02/04 は REVIEW(GUIロード・実機スマホ確認が残)。**次の人間/GUI作業**: docs/phase0-howto.md に沿って ①`npm run rebuild-pty` ②AntigravityでF5ロード ③スマホから接続確認 ④probeAgentCommands 実行 → 結果を findings F3/F6 に追記。
+- 2026-07-18 claude-fable: docs 基盤(requirements v0.2 / findings / decisions / tasks / collaboration)作成。TASK-01 DONE。

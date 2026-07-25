@@ -1,0 +1,30 @@
+node_modules/
+dist/
+out/
+*.vsix
+.vscode-test/
+*.log
+.env
+.env.*
+
+# phase0 test artifacts
+e2e-result.txt
+scratch-multisession.js
+scratch-realhost.js
+relay-cf/node_modules/
+relay-cf/cf-result.txt
+relay-cf/.wrangler/
+.playwright-mcp/
+scratch-push-test.js
+scratch-realhost-push.js
+push-result.txt
+scratch-reconnect-test.js
+reconnect-result.txt
+scratch-kill-test.js
+kill-result.txt
+
+# TASK-21: node-pty 自前ビルド(linux-*)。リリース用はCIで古いglibc上で生成する
+vendor-prebuilds/
+
+# 事業判断(価格・原価・競合)は公開しない
+business/

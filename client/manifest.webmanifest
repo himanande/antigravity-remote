@@ -1,0 +1,17 @@
+{
+  "name": "Antigravity Remote",
+  "short_name": "AG Remote",
+  "description": "Antigravity のセッションをスマホから操作",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1e1e1e",
+  "theme_color": "#1e1e1e",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='192' height='192'%3E%3Crect width='192' height='192' rx='36' fill='%231e1e1e'/%3E%3Ctext x='96' y='128' font-size='110' text-anchor='middle' fill='%233fb950'%3E%E2%8C%A8%3C/text%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}

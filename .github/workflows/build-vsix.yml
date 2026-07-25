@@ -1,0 +1,70 @@
+name: build-vsix
+
+# TASK-21: 配布用 .vsix を組み立てる。
+#
+# node-pty は Node-API(N-API)実装で **ABI安定**のため、Electron/Node の世代ごとの
+# ビルドは不要。必要なのは plat-arch ごとのバイナリで、win32/darwin は node-pty 公式
+# prebuilds をそのまま使える。**linux だけ公式prebuildが無い**ので自前ビルドする。
+#
+# 重要: linux ビルドは必ず**古いglibcのコンテナ**で行う。開発機(glibc 2.42等)で
+# ビルドすると GLIBC_2.42 を要求し、Ubuntu 22.04/24.04 で動かない(findings F16)。
+# debian bullseye = glibc 2.31 を基準にする。
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-linux-native:
+    strategy:
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container: node:20-bullseye # glibc 2.31 を下限にする
+    steps:
+      - uses: actions/checkout@v4
+      - name: ビルド依存
+        run: apt-get update && apt-get install -y python3 make g++
+      - name: node-pty をソースからビルド
+        run: npm_config_build_from_source=true npm install node-pty --no-save
+      - name: バイナリ取り出し
+        run: |
+          mkdir -p out
+          cp node_modules/node-pty/build/Release/pty.node out/
+          strip out/pty.node
+          objdump -T out/pty.node | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: prebuild-${{ matrix.target }}
+          path: out/pty.node
+
+  package:
+    needs: build-linux-native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - name: linux バイナリを取り込む
+        uses: actions/download-artifact@v4
+        with:
+          path: dl
+      - run: |
+          mkdir -p vendor-prebuilds/linux-x64 vendor-prebuilds/linux-arm64
+          cp dl/prebuild-linux-x64/pty.node vendor-prebuilds/linux-x64/
+          cp dl/prebuild-linux-arm64/pty.node vendor-prebuilds/linux-arm64/
+      - name: .vsix を作る(全ターゲット必須)
+        env:
+          STRICT_NATIVE: "1"
+        run: npm run package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: antigravity-remote-vsix
+          path: antigravity-remote.vsix

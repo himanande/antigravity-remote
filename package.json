@@ -1,0 +1,136 @@
+{
+  "name": "antigravity-remote",
+  "displayName": "Antigravity Remote",
+  "description": "Control your IDE terminals (Claude Code, Gemini CLI, any CLI) from your phone. End-to-end encrypted, multi-session, two-way synced.",
+  "version": "0.1.0",
+  "publisher": "himanande",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/himanande/antigravity-remote.git"
+  },
+  "homepage": "https://github.com/himanande/antigravity-remote#readme",
+  "bugs": {
+    "url": "https://github.com/himanande/antigravity-remote/issues"
+  },
+  "keywords": [
+    "remote",
+    "terminal",
+    "mobile",
+    "claude-code",
+    "antigravity"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "galleryBanner": {
+    "color": "#0d1117",
+    "theme": "dark"
+  },
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "antigravityRemote.startSession",
+        "title": "Antigravity Remote: ホスト型セッションを開始してリレーに接続(平文・ローカル用)"
+      },
+      {
+        "command": "antigravityRemote.pair",
+        "title": "Antigravity Remote: ペアリング開始(QR・E2EE)"
+      },
+      {
+        "command": "antigravityRemote.newSession",
+        "title": "Antigravity Remote: セッションを追加(プリセット選択)"
+      },
+      {
+        "command": "antigravityRemote.killRemote",
+        "title": "Antigravity Remote: リモート接続を遮断(キルスイッチ・ペアリング失効)"
+      },
+      {
+        "command": "antigravityRemote.stopSession",
+        "title": "Antigravity Remote: 全セッションを停止"
+      },
+      {
+        "command": "antigravityRemote.probeAgentCommands",
+        "title": "Antigravity Remote: 内部エージェントコマンドを検出(TASK-05)"
+      }
+    ],
+    "configuration": {
+      "title": "Antigravity Remote",
+      "properties": {
+        "antigravityRemote.relayUrl": {
+          "type": "string",
+          "default": "ws://localhost:8787",
+          "description": "接続先リレーのベースURL。ローカル簡易リレーは ws://localhost:8787、Cloudflareリレーは wss://<worker>.workers.dev。実際の接続は <base>/ws?room=&role=host"
+        },
+        "antigravityRemote.room": {
+          "type": "string",
+          "default": "default-room",
+          "description": "平文(ローカル簡易リレー)接続時のみ使う room 識別子。E2EEペアリング時は毎回ランダムなroomを自動発行してQRに埋め込むため、この値は使われない"
+        },
+        "antigravityRemote.clientBaseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "スマホPWAの配信ベースURL(ペアリングQRのリンク先)。空ならrelayUrlから推定(ローカル簡易リレーはPWAも同居配信)"
+        },
+        "antigravityRemote.enablePush": {
+          "type": "boolean",
+          "default": true,
+          "description": "Web Push 通知を有効にする(入力待ちになったセッションをスマホに通知)"
+        },
+        "antigravityRemote.promptPatterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "入力待ち検出の正規表現(大小無視)。空なら既定パターン(Claude Codeの確認プロンプト等)を使用"
+        },
+        "antigravityRemote.sessionPreset": {
+          "type": "string",
+          "default": "claude",
+          "enum": [
+            "claude",
+            "bash"
+          ],
+          "description": "ホスト型セッションで起動するプリセットコマンド(任意コマンド起動は不可)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "rebuild-pty": "electron-rebuild -v 39.2.3 -m ./ -w node-pty",
+    "prepare-native": "node scripts/prepare-native.js",
+    "package": "npm run build && npm run prepare-native && vsce package --no-dependencies -o antigravity-remote.vsix"
+  },
+  "dependencies": {
+    "libsodium-wrappers": "^0.8.4",
+    "node-pty": "^1.0.0",
+    "qrcode": "^1.5.4",
+    "web-push": "^3.6.7",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "@types/libsodium-wrappers": "^0.7.14",
+    "@types/node": "^20.0.0",
+    "@types/qrcode": "^1.5.6",
+    "@types/vscode": "^1.90.0",
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.5.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.23.0",
+    "ovsx": "^1.0.2",
+    "typescript": "^5.5.0"
+  },
+  "allowScripts": {
+    "esbuild@0.23.1": true
+  }
+}
