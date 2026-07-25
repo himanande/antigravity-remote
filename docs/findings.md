@@ -164,7 +164,8 @@
   npm run package                                                         # → antigravity-remote.vsix (2.62MB)
   objdump -T vendor-prebuilds/linux-x64/pty.node | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1
   ```
-- 未了: `linux-arm64` のバイナリ(CI の `ubuntu-24.04-arm` ランナーで生成)。CI 未実行のため **linux-x64/arm64 は実機未検証**。`vsce package` は `repository` フィールドが無いと README の相対リンクでエラーになるため、暫定で `--baseContentUrl` を渡している(TASK-23 で GitHub リポジトリを作って置き換える)。
+- **CI実行結果(2026-07-25、run 30136849726)**: 3ジョブすべて成功。`node:20-bullseye` コンテナで作った linux-x64 / linux-arm64 は **`GLIBC_2.28` 要求**(Debian 10 / RHEL 8 相当。実質すべての現行ディストロで動く)。生成された `.vsix` は **2.91MB / 全6ターゲット同梱**(darwin×2・win32×2・linux×2)で、展開して `pty.spawn` → 起動成功。**開発機ビルドの GLIBC_2.42 問題は解消**。
+- 未了: **Windows / macOS 実機での起動確認**(手元に環境が無い)。バイナリは node-pty 公式 prebuilds をそのまま同梱しているだけなので理屈上の懸念は少ないが、実機1回の確認は必要。
 
 ---
 ### 追記のしかた

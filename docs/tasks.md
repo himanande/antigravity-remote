@@ -119,9 +119,13 @@
   - **スパイク結論(2026-07-25、F16)**: 前提が誤りだった。node-pty 1.1.0 は **Node-API(N-API)実装でABI安定**なので、**Electron世代ごとのビルドは不要**。必要なのは plat-arch ごとのバイナリ同梱のみ。Antigravity が Electron を上げても再ビルド不要。
   - 実装済: `scripts/prepare-native.js`(`dist/node_modules/node-pty` に lib+prebuilds を集約、*.pdb 53MB を除外)、`.vscodeignore`、`npm run package`、macOS spawn-helper の chmod フォールバック(`src/pty.ts`)、`.github/workflows/build-vsix.yml`。
   - 実測: **.vsix 2.62MB / darwin×2・win32×2・linux-x64 同梱**。展開して PTY 起動成功。
-  - 残(完了条件): ① CI を回して **linux-x64/arm64 を古いglibc(bullseye 2.31)でビルド**(開発機ビルドは GLIBC_2.42 要求で他ディストロ不可)。② **Windows/macOS 実機での起動確認**(手元に環境が無いためユーザー or ベータ配布で検証)。
+  - **CI完了(2026-07-25、run 30136849726)**: linux-x64/arm64 を `node:20-bullseye` でビルド → **GLIBC_2.28 要求**(実質全ディストロ対応)。CI産 `.vsix` は **2.91MB / 全6ターゲット**、展開して `pty.spawn` 成功。
+  - 残(これだけ): **Windows / macOS 実機での起動確認**。node-pty公式prebuildsをそのまま同梱しているだけなので懸念は小さいが、各1回の確認は必要。
 - **TASK-22 [P0] DoS/レート制限**: room単位・IP単位の接続レート制限をリレー(worker)に追加。公開直後の悪用対策。
-- **TASK-23 [P0] 公開整備(拡張)**: publisher/icon/README/CHANGELOG/**LICENSE(OSS)**/プライバシーポリシー。
+- **TASK-23 [P0] 公開整備(拡張)**: status: DONE(2026-07-25) / owner: claude-opus / deps: —
+  - LICENSE(MIT)、`media/icon.png`(256/128)、README をストア掲載ページとして書き換え(英語主・日本語併記)、CHANGELOG、PRIVACY(コード実測ベース: worker はストレージ呼び出しゼロ、push subscription はPCメモリ上のみ)、package.json メタデータ(license/icon/repository/homepage/bugs/keywords/galleryBanner、publisher=himanande、v0.1.0)。
+  - **GitHub 公開**: <https://github.com/himanande/antigravity-remote>(public、MIT)。事業判断(価格・原価試算・競合分析)は `business/`(gitignore)へ退避し、公開履歴に残らないよう `main` を新規履歴で開始。旧履歴はローカル `master` に保存。
+  - 結果: `vsce package` **警告ゼロ**。
 
 ### Stage 1: 無料OSSローンチ
 - **TASK-24 [P1] 拡張 Open VSX 公開**: vsce package→publish。node-pty(TASK-21)前提。
@@ -137,6 +141,7 @@
 - フェーズ2 Agent Managerミラー/内部コマンド操作(競合と同じ土俵。差別化が固まってから判断)。
 
 ### 進捗ログ(新しいものを上に)
+- 2026-07-25 claude-opus: **TASK-23 公開整備 DONE / GitHub公開 / CI成功で TASK-21 も実質決着**。LICENSE(MIT)・icon・README(ストア掲載版)・CHANGELOG・PRIVACY・package.jsonメタを整備し `vsce package` 警告ゼロ。公開時に課金戦略・想定収益・競合分析が晒される問題に気付き、ADR-007本文とStage2タスクを `business/`(gitignore)へ退避、`main` を新規履歴で開始(旧履歴はローカル `master`)。GitHub public 化 <https://github.com/himanande/antigravity-remote>、publisher=himanande。CI(build-vsix.yml)を実行し3ジョブ成功 → linux-x64/arm64 は **GLIBC_2.28**、**.vsix 2.91MB / 全6ターゲット**で PTY 起動確認(F16追記)。**次**: TASK-22(リレーのレート制限)→ TASK-24(Open VSX公開、要 himanande 名前空間+トークン)。TASK-21 の残は Windows/macOS 実機確認のみ。
 - 2026-07-25 claude-opus: **TASK-21 スパイク完了 → 最大の技術難所は消滅**。node-pty 1.1.0 が **N-API実装でABI安定**であることを実証(electron-rebuild 産バイナリが素のNodeで動く)。よって「Electron世代マトリクス」「起動時rebuild」は不要で、plat-arch同梱だけでよい。`scripts/prepare-native.js` + `.vscodeignore` + `npm run package` で **.vsix 2.62MB(5プラットフォーム)** を生成し、展開→PTY起動まで確認。Windows prebuilds の *.pdb 53MB 除外が効いた。⚠️Linuxは公式prebuild無し&開発機ビルドは GLIBC_2.42 要求のため、`.github/workflows/build-vsix.yml`(node:20-bullseye)でCIビルドする方針(F16)。**次**: TASK-23(GitHubリポジトリ作成+repositoryフィールド+LICENSE/icon)→ CI実行 → TASK-22(レート制限)。
 - 2026-07-23 claude-opus: **TASK-20 PC⇄スマホ双方向同期 実装(→要実機確認)**。src/terminalMirror.ts の TerminalMirror で、ホストの各 node-pty を VS Code Pseudoterminal として PC ターミナルタブにも表示。同じptyを両画面が見るため入力/出力が双方向同期(handleInput→write、setDimensions→resize、close→session close)。SessionManagerはvscode非依存維持、結合はextension層(makeActive で manager+mirror 生成、stopSizeで dispose)。open前live抑止+open時scrollback再生で取りこぼし/重複なし、closingガードで二重close防止。tsc/build PASS、実動作は要実機(F15)。またユーザー要望で **TASK-18 キーバーにユーザー定義ショートカット**(＋→管理シート、localStorage永続、\n/\t/\e解釈)も追加済(Playwright検証)。**次**: 実機で双方向同期の確認。その後フェーズ2(Agent Managerミラー)or 公開準備(TWA/ストア)。
 - 2026-07-22 claude-opus: **実機通し確認 成功 + 製品化前セキュリティ対応 + キーバー**。①ユーザーがCloudflare実デプロイ(無料SQLite-DO)しスマホでQR→E2EE→PC操作まで到達(TASK-14実デプロイ相当クリア)。過程で worker に Workers Static Assets で client/ 同居配信を追加(1ドメイン完結、clientBaseUrl不要化)、F5用 .vscode/launch.json+tasks.json、node-pty rebuild。②ユーザーFB反映: **TASK-18 キーバー**(PWA下部に矢印/Esc/Tab/Ctrl/^C/⏎、Ctrlはトグル式で次1文字を制御コード化)を実装・Playwright検証・DONE。③**セキュリティ対応(TASK-19)**: room乱数化(generateRoomId、pairing毎に128bit)+依存の自己ホスト+SRI(xterm/libsodium を client/vendor/ に取り込み integrity付与)。tsc/build/Playwright PASS(F14)。**次**: ②既存セッション同期(Pseudoterminal で host pty を PC側ターミナルにも表示=双方向同期)=TASK-20。
