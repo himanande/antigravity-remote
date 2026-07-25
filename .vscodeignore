@@ -10,6 +10,8 @@ relay-cf/**
 client/**
 docs/**
 vendor-prebuilds/**
+dl/**
+*.vsix
 scratch-*
 esbuild.js
 tsconfig.json
