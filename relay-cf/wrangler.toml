@@ -7,9 +7,18 @@ compatibility_date = "2026-06-01"
 name = "RELAY_ROOM"
 class_name = "RelayRoom"
 
+# 接続レート制限(1 IP = 1 DO)。TASK-22 / F18
+[[durable_objects.bindings]]
+name = "RATE_GATE"
+class_name = "RateGate"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RelayRoom"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RateGate"]
 
 # スマホPWA(client/)を同じworkerで配信する。静的ファイルに一致しない
 # リクエスト(/ws, /health)は default export の fetch に落ちる。
@@ -19,22 +28,6 @@ directory = "../client"
 
 [observability]
 enabled = true
-
-# 接続レート制限(TASK-22)。DO を作る前に fetch で効かせる。
-# period は 10 か 60 のみ。制限はコロケーション単位・結果整合なので、
-# 精密な会計ではなく「明らかな洪水を止める」用途。
-[[ratelimits]]
-name = "CONN_LIMIT_IP"
-namespace_id = "1001"
-
-[ratelimits.simple]
-limit = 60
-period = 60
-
-[[ratelimits]]
-name = "CONN_LIMIT_ROOM"
-namespace_id = "1002"
-
-[ratelimits.simple]
-limit = 120
-period = 60
+# 注: Workers の Rate Limiting binding([[ratelimits]])は、本番デプロイして
+# 実WebSocket接続90本/25秒で試しても一度も発火せず、実効を確認できなかった(F18)。
+# 公開サービスの防御を実証できない機構に預けないため、RateGate DO で自前実装している。

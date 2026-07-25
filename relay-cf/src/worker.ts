@@ -11,16 +11,9 @@
 //   room = テナント識別子(TASK-13 のペアリングで確立。現状はクエリで受ける)
 //   role = host | client
 
-/** Workers Rate Limiting binding(period は 10 か 60 のみ。コロケーション単位・結果整合)。 */
-interface RateLimiter {
-  limit(opts: { key: string }): Promise<{ success: boolean }>;
-}
-
 export interface Env {
   RELAY_ROOM: DurableObjectNamespace;
-  // 未設定でも動くようにする(ローカル dev やバインディング未対応環境)
-  CONN_LIMIT_IP?: RateLimiter;
-  CONN_LIMIT_ROOM?: RateLimiter;
+  RATE_GATE: DurableObjectNamespace;
 }
 
 const ROLES = new Set(["host", "client"]);
@@ -49,10 +42,12 @@ export default {
         return new Response("expected websocket", { status: 426 });
       }
 
-      // 接続レート制限は **DO を作る前** に効かせる。ここを通してしまうと
+      // 接続レート制限は **room の DO を作る前** に効かせる。ここを通してしまうと
       // 攻撃者が任意の room 名で DO を無限に生成でき、無料枠を焼き切れる。
       const ip = req.headers.get("cf-connecting-ip") ?? "unknown";
-      if (!(await allow(env.CONN_LIMIT_IP, ip)) || !(await allow(env.CONN_LIMIT_ROOM, room))) {
+      const gate = env.RATE_GATE.get(env.RATE_GATE.idFromName("ip:" + ip));
+      const verdict = await gate.fetch("https://gate/check");
+      if (verdict.status !== 200) {
         return new Response("too many connections", {
           status: 429,
           headers: { "retry-after": "60" },
@@ -69,14 +64,49 @@ export default {
   },
 };
 
-/** バインディング未設定なら素通り(ローカル dev を壊さない)。 */
-async function allow(limiter: RateLimiter | undefined, key: string): Promise<boolean> {
-  if (!limiter) return true;
-  try {
-    const { success } = await limiter.limit({ key });
-    return success;
-  } catch {
-    return true; // 制限機構の障害でサービスを止めない
+// --- 接続レート制限(1 IP = 1 DO)---
+// Workers の Rate Limiting binding は本番で実効を確認できなかったため(F18)、
+// 自前のトークンバケツで実装する。DO ならローカルでも本番でも同じ挙動を検証できる。
+const GATE_PER_MIN = 20; // 定常。正規利用の再接続は1分に数回で足りる
+const GATE_BURST = 40; // 瞬間的な張り直し(複数セッション同時再接続など)を吸収
+const GATE_BLOCK_MS = 60_000; // 使い切ったら1分止める
+
+/**
+ * 1 IP 分の接続レート制限。
+ *
+ * トークンは**メモリ上**で数え、使い切ったときだけ「いつまで拒否か」を
+ * **ストレージに永続化**する。こうすると、
+ *  - 通常時はストレージ操作ゼロ(無料枠の書き込み上限を消費しない)
+ *  - 攻撃者が間隔を空けて DO の退避(eviction)を狙っても、復帰時に
+ *    blockedUntil を読み直すのでバケツのリセット逃げが効かない
+ * の両立ができる。
+ */
+export class RateGate {
+  private tokens = GATE_BURST;
+  private ts = Date.now();
+  private blockedUntil = 0;
+  private loaded = false;
+
+  constructor(private readonly state: DurableObjectState, _env: Env) {}
+
+  async fetch(_req: Request): Promise<Response> {
+    if (!this.loaded) {
+      this.blockedUntil = (await this.state.storage.get<number>("blockedUntil")) ?? 0;
+      this.loaded = true;
+    }
+    const now = Date.now();
+    if (now < this.blockedUntil) return new Response("blocked", { status: 429 });
+
+    this.tokens = Math.min(GATE_BURST, this.tokens + ((now - this.ts) / 60_000) * GATE_PER_MIN);
+    this.ts = now;
+
+    if (this.tokens < 1) {
+      this.blockedUntil = now + GATE_BLOCK_MS;
+      await this.state.storage.put("blockedUntil", this.blockedUntil);
+      return new Response("blocked", { status: 429 });
+    }
+    this.tokens -= 1;
+    return new Response("ok", { status: 200 });
   }
 }
 

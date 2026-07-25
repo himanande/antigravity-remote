@@ -124,7 +124,8 @@
 - **TASK-22 [P0] DoS/レート制限**: status: REVIEW / owner: claude-opus / deps: —
   - 4層で実装(F17): ①room形式検証 ②**DO生成前**の接続レート制限(Rate Limiting binding、per-IP 60/60s・per-room 120/60s) ③room内同時接続上限(host2/client6) ④ソケット単位のトークンバケツ(300msg/s・burst1200→1008切断、512KB超→1009切断)。ホスト側 scrollback にバイト上限256KBも追加。
   - 検証: `relay-cf/scratch-cf-limits.js` で **12項目 PASS**(通常の中継が壊れていないことを含む)。
-  - 残: **Rate Limiting binding はローカルdevで効かない**(実測)ため、**本番デプロイ後に per-IP/per-room 制限の実効を確認**すること。
+  - **本番検証で Rate Limiting binding が無効と判明(F18)** → `RateGate` DO(1 IP = 1 DO、定常20/分・バースト40・超過で60秒ブロック、blockedUntil のみ永続化)に置き換え。ローカルで4項目PASS(DO退避によるリセット回避も封じたことを確認)、既存12項目も退行なし。
+  - 残: **RateGate 版のデプロイ後、本番で実WSアップグレードによる発火確認**(curlでは Upgrade チェックが手前にあり検証不能)。多数IPからの分散接続は原理的に防げず、恒久策は独自ドメイン+WAF(バックログ)。
 - **TASK-23 [P0] 公開整備(拡張)**: status: DONE(2026-07-25) / owner: claude-opus / deps: —
   - LICENSE(MIT)、`media/icon.png`(256/128)、README をストア掲載ページとして書き換え(英語主・日本語併記)、CHANGELOG、PRIVACY(コード実測ベース: worker はストレージ呼び出しゼロ、push subscription はPCメモリ上のみ)、package.json メタデータ(license/icon/repository/homepage/bugs/keywords/galleryBanner、publisher=himanande、v0.1.0)。
   - **GitHub 公開**: <https://github.com/himanande/antigravity-remote>(public、MIT)。事業判断(価格・原価試算・競合分析)は `business/`(gitignore)へ退避し、公開履歴に残らないよう `main` を新規履歴で開始。旧履歴はローカル `master` に保存。
