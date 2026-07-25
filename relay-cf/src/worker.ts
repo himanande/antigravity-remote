@@ -71,41 +71,50 @@ const GATE_PER_MIN = 20; // 定常。正規利用の再接続は1分に数回で
 const GATE_BURST = 40; // 瞬間的な張り直し(複数セッション同時再接続など)を吸収
 const GATE_BLOCK_MS = 60_000; // 使い切ったら1分止める
 
+interface GateState {
+  tokens: number;
+  ts: number;
+  blockedUntil: number;
+}
+
 /**
  * 1 IP 分の接続レート制限。
  *
- * トークンは**メモリ上**で数え、使い切ったときだけ「いつまで拒否か」を
- * **ストレージに永続化**する。こうすると、
- *  - 通常時はストレージ操作ゼロ(無料枠の書き込み上限を消費しない)
- *  - 攻撃者が間隔を空けて DO の退避(eviction)を狙っても、復帰時に
- *    blockedUntil を読み直すのでバケツのリセット逃げが効かない
- * の両立ができる。
+ * ⚠️ バケツの状態は**必ず永続化する**。本番の DO は接続の合間(1秒未満)でも
+ * 退避(eviction)されるため、メモリだけで数えるとリクエストごとにトークンが
+ * 満タンに戻り、**ゆっくり接続する攻撃者は制限を完全に回避できる**(F18で実測)。
+ *
+ * 書き込みは**許可したときだけ**行う。拒否時に書かないので、攻撃が続いても
+ * 書き込み回数は「1分あたり GATE_PER_MIN 回」に自然に頭打ちになる。
  */
 export class RateGate {
-  private tokens = GATE_BURST;
-  private ts = Date.now();
-  private blockedUntil = 0;
+  private s: GateState = { tokens: GATE_BURST, ts: Date.now(), blockedUntil: 0 };
   private loaded = false;
 
   constructor(private readonly state: DurableObjectState, _env: Env) {}
 
   async fetch(_req: Request): Promise<Response> {
     if (!this.loaded) {
-      this.blockedUntil = (await this.state.storage.get<number>("blockedUntil")) ?? 0;
+      const saved = await this.state.storage.get<GateState>("gate");
+      if (saved) this.s = saved;
       this.loaded = true;
     }
     const now = Date.now();
-    if (now < this.blockedUntil) return new Response("blocked", { status: 429 });
+    if (now < this.s.blockedUntil) return new Response("blocked", { status: 429 });
 
-    this.tokens = Math.min(GATE_BURST, this.tokens + ((now - this.ts) / 60_000) * GATE_PER_MIN);
-    this.ts = now;
+    this.s.tokens = Math.min(
+      GATE_BURST,
+      this.s.tokens + ((now - this.s.ts) / 60_000) * GATE_PER_MIN
+    );
+    this.s.ts = now;
 
-    if (this.tokens < 1) {
-      this.blockedUntil = now + GATE_BLOCK_MS;
-      await this.state.storage.put("blockedUntil", this.blockedUntil);
+    if (this.s.tokens < 1) {
+      this.s.blockedUntil = now + GATE_BLOCK_MS;
+      await this.state.storage.put("gate", this.s);
       return new Response("blocked", { status: 429 });
     }
-    this.tokens -= 1;
+    this.s.tokens -= 1;
+    await this.state.storage.put("gate", this.s);
     return new Response("ok", { status: 200 });
   }
 }
