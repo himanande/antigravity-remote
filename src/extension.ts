@@ -64,9 +64,44 @@ function deriveClientBase(cfg: vscode.WorkspaceConfiguration, relayUrl: string):
   return relayUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
 }
 
+/**
+ * リレーURLが一度も設定されていない場合に案内する。
+ *
+ * 既定値は開発用の ws://localhost:8787 なので、そのまま実行すると
+ * localhost を指すQRが出てスマホからは繋がらず、しかも失敗理由が分からない。
+ * 「明示的に localhost を設定した人」(LAN利用)は妨げないよう、値そのものではなく
+ * **設定済みかどうか**で判定する。
+ */
+async function ensureRelayConfigured(cfg: vscode.WorkspaceConfiguration): Promise<boolean> {
+  const ins = cfg.inspect<string>("relayUrl");
+  if (ins?.globalValue || ins?.workspaceValue || ins?.workspaceFolderValue) return true;
+
+  const SETUP = "セットアップ手順を開く";
+  const SETTINGS = "設定を開く";
+  const pick = await vscode.window.showWarningMessage(
+    "リレーのURLが未設定です。Antigravity Remote は中継サーバーを1つ必要とします" +
+      "(Cloudflare Workers の無料枠に数分でデプロイできます)。設定するまでスマホからは接続できません。",
+    { modal: true },
+    SETUP,
+    SETTINGS
+  );
+  if (pick === SETUP) {
+    void vscode.env.openExternal(
+      vscode.Uri.parse("https://github.com/himanande/antigravity-remote#quick-start")
+    );
+  } else if (pick === SETTINGS) {
+    void vscode.commands.executeCommand(
+      "workbench.action.openSettings",
+      "antigravityRemote.relayUrl"
+    );
+  }
+  return false;
+}
+
 /** E2EE ペアリングを開始: 鍵ペア+秘密を生成し、QR+URL を表示してリレーに接続する。 */
 async function startPairing() {
   const cfg = vscode.workspace.getConfiguration("antigravityRemote");
+  if (!(await ensureRelayConfigured(cfg))) return;
   const relayUrl = cfg.get<string>("relayUrl", "ws://localhost:8787");
   const preset = cfg.get<string>("sessionPreset", "claude");
   const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? defaultCwd();
@@ -128,6 +163,7 @@ function connectRelay(cfg: vscode.WorkspaceConfiguration, pairing?: Pairing) {
 /** リレーに接続し、最初の pty セッションを作成する。既に動作中なら1本追加する。 */
 async function startSession() {
   const cfg = vscode.workspace.getConfiguration("antigravityRemote");
+  if (!(await ensureRelayConfigured(cfg))) return;
   const preset = cfg.get<string>("sessionPreset", "claude");
   const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? defaultCwd();
 
