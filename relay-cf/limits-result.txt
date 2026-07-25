@@ -1,0 +1,14 @@
+PASS: 不正な room を拒否 ("") — status=400
+PASS: 不正な room を拒否 ("ab") — status=400
+PASS: 不正な room を拒否 ("aaaaaaaaaaaa") — status=400
+PASS: 不正な room を拒否 ("bad room!") — status=400
+PASS: 不正な room を拒否 ("../../etc") — status=400
+PASS: 正しい room は 400 にならない — status=426
+PASS: client 6本まで接続できる — 接続できた本数=6
+PASS: 7本目は拒否される — status=429
+PASS: host は 2本まで(再接続の重なり用) — 3本目 status=429
+PASS: 512KB 超のメッセージで切断(1009) — code=1009 reason=message too large
+PASS: 流量超過で切断(1008) — code=1008 reason=rate limit exceeded
+PASS: 通常の中継は従来どおり動く — 受信=hello
+
+ALL PASS

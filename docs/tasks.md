@@ -121,7 +121,10 @@
   - 実測: **.vsix 2.62MB / darwin×2・win32×2・linux-x64 同梱**。展開して PTY 起動成功。
   - **CI完了(2026-07-25、run 30136849726)**: linux-x64/arm64 を `node:20-bullseye` でビルド → **GLIBC_2.28 要求**(実質全ディストロ対応)。CI産 `.vsix` は **2.91MB / 全6ターゲット**、展開して `pty.spawn` 成功。
   - 残(これだけ): **Windows / macOS 実機での起動確認**。node-pty公式prebuildsをそのまま同梱しているだけなので懸念は小さいが、各1回の確認は必要。
-- **TASK-22 [P0] DoS/レート制限**: room単位・IP単位の接続レート制限をリレー(worker)に追加。公開直後の悪用対策。
+- **TASK-22 [P0] DoS/レート制限**: status: REVIEW / owner: claude-opus / deps: —
+  - 4層で実装(F17): ①room形式検証 ②**DO生成前**の接続レート制限(Rate Limiting binding、per-IP 60/60s・per-room 120/60s) ③room内同時接続上限(host2/client6) ④ソケット単位のトークンバケツ(300msg/s・burst1200→1008切断、512KB超→1009切断)。ホスト側 scrollback にバイト上限256KBも追加。
+  - 検証: `relay-cf/scratch-cf-limits.js` で **12項目 PASS**(通常の中継が壊れていないことを含む)。
+  - 残: **Rate Limiting binding はローカルdevで効かない**(実測)ため、**本番デプロイ後に per-IP/per-room 制限の実効を確認**すること。
 - **TASK-23 [P0] 公開整備(拡張)**: status: DONE(2026-07-25) / owner: claude-opus / deps: —
   - LICENSE(MIT)、`media/icon.png`(256/128)、README をストア掲載ページとして書き換え(英語主・日本語併記)、CHANGELOG、PRIVACY(コード実測ベース: worker はストレージ呼び出しゼロ、push subscription はPCメモリ上のみ)、package.json メタデータ(license/icon/repository/homepage/bugs/keywords/galleryBanner、publisher=himanande、v0.1.0)。
   - **GitHub 公開**: <https://github.com/himanande/antigravity-remote>(public、MIT)。事業判断(価格・原価試算・競合分析)は `business/`(gitignore)へ退避し、公開履歴に残らないよう `main` を新規履歴で開始。旧履歴はローカル `master` に保存。

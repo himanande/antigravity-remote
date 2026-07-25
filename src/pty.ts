@@ -61,7 +61,9 @@ export interface PtyOptions {
 export class PtySession {
   private proc: IPty;
   private scrollback: string[] = [];
+  private scrollbackBytes = 0;
   private static readonly SCROLLBACK_MAX = 500; // チャンク数の上限
+  private static readonly SCROLLBACK_BYTES_MAX = 256 * 1024; // 合計バイト上限(snapshot 1通の大きさを縛る)
   private dataListeners = new Set<(chunk: string) => void>();
   private exitListeners = new Set<(code: number) => void>();
 
@@ -88,8 +90,15 @@ export class PtySession {
 
   private pushScrollback(chunk: string) {
     this.scrollback.push(chunk);
-    if (this.scrollback.length > PtySession.SCROLLBACK_MAX) {
-      this.scrollback.splice(0, this.scrollback.length - PtySession.SCROLLBACK_MAX);
+    this.scrollbackBytes += chunk.length;
+    // チャンク数だけでなく**バイト数**でも切る。1チャンクは PTY から最大数十KB来るため、
+    // 数だけの制限では snapshot 1通が数MBになり、リレーのメッセージ上限に当たる(TASK-22)。
+    while (
+      this.scrollback.length > PtySession.SCROLLBACK_MAX ||
+      (this.scrollbackBytes > PtySession.SCROLLBACK_BYTES_MAX && this.scrollback.length > 1)
+    ) {
+      const dropped = this.scrollback.shift();
+      this.scrollbackBytes -= dropped ? dropped.length : 0;
     }
   }
 

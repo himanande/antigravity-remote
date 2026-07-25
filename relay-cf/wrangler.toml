@@ -19,3 +19,22 @@ directory = "../client"
 
 [observability]
 enabled = true
+
+# 接続レート制限(TASK-22)。DO を作る前に fetch で効かせる。
+# period は 10 か 60 のみ。制限はコロケーション単位・結果整合なので、
+# 精密な会計ではなく「明らかな洪水を止める」用途。
+[[ratelimits]]
+name = "CONN_LIMIT_IP"
+namespace_id = "1001"
+
+[ratelimits.simple]
+limit = 60
+period = 60
+
+[[ratelimits]]
+name = "CONN_LIMIT_ROOM"
+namespace_id = "1002"
+
+[ratelimits.simple]
+limit = 120
+period = 60
