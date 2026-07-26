@@ -3965,7 +3965,7 @@ function buildPairingUrl(p2, clientBase, relayBase) {
 (async () => {
   const relay = process.env.RELAY_URL || "ws://localhost:8787";
   const clientBase = process.env.CLIENT_BASE || "http://localhost:8787";
-  const room = "e2ee-room";
+  const room = "e2ee" + Math.random().toString(36).slice(2, 10) + Date.now();
   const pairing = await createPairing(room);
   const url = buildPairingUrl(pairing, clientBase, relay);
   fs2.writeFileSync(__dirname + "/pairing-url.txt", url + "\n");

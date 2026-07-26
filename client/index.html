@@ -70,8 +70,8 @@
     #addKeyBtn { font-size:18px; line-height:1; color:var(--muted); }
 
     /* ショートカット管理 ボトムシート */
-    #modal { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none;
-      align-items:flex-end; z-index:50; }
+    #modal { position:fixed; top:0; left:0; width:100%; height:100%;
+      background:rgba(0,0,0,.55); display:none; align-items:flex-end; z-index:50; }
     #modal.show { display:flex; }
     .sheet { width:100%; background:var(--bar); border-top:1px solid var(--line);
       border-radius:14px 14px 0 0; padding:14px 14px calc(14px + env(safe-area-inset-bottom));
@@ -131,6 +131,7 @@
         <button data-key="tab">Tab</button>
         <button id="ctrlBtn" data-key="ctrl">Ctrl</button>
         <button data-key="c-c">^C</button>
+        <button data-key="clear" title="画面クリア(Ctrl+L)">clr</button>
         <span id="customKeys"></span>
         <button id="addKeyBtn" title="ショートカットを追加">＋</button>
       </div>
@@ -190,8 +191,11 @@
     });
 
     // キーバー: 特殊キーを直接 input として送る(端末フォーカス/ソフトキーボード不要)
+    // clear は文字列 "clear\r" ではなく **Ctrl+L(\x0c)** を送る。プロンプト上では
+    // readline が画面消去に解釈し、TUI(claude 等)で未対応でも制御文字なので
+    // 入力欄に文字が混入しない。"clear" を打つ実装はTUI中に文字化けを起こす。
     const KEYSEQ = { esc: "\x1b", tab: "\t", up: "\x1b[A", down: "\x1b[B",
-      left: "\x1b[D", right: "\x1b[C", enter: "\r", "c-c": "\x03" };
+      left: "\x1b[D", right: "\x1b[C", enter: "\r", "c-c": "\x03", clear: "\x0c" };
 
     // ── ユーザー定義ショートカット(端末=このブラウザにローカル保存)──
     const CUSTOM_KEY = "ar_custom_keys_v1";
@@ -241,7 +245,15 @@
     });
 
     // ── ショートカット管理シート ──
-    function openModal() { renderCustomList(); $("modal").classList.add("show"); }
+    function openModal() {
+      renderCustomList();
+      // ⚠️ 端末にフォーカスが残っているとソフトキーボードが出たままになり、
+      // ボトムシートがキーボードの裏(可視域の外)に描画されて「押しても何も起きない」
+      // ように見える。開く前に必ずフォーカスを外してキーボードを畳む。
+      try { document.activeElement && document.activeElement.blur(); } catch { /* noop */ }
+      $("modal").classList.add("show");
+      applyViewport(); // シート内の入力でキーボードが出たときも可視域に留める
+    }
     function closeModal() { $("modal").classList.remove("show"); }
     function renderCustomList() {
       const list = $("customList");
@@ -485,13 +497,17 @@
     // iOS等では layout viewport はキーボードで縮まないため、visualViewport の
     // 高さ/オフセットに #app を合わせてピン留めし、キーバーがキーボード下に隠れないようにする。
     const vv = window.visualViewport;
+    const applyViewport = () => {
+      if (!vv) return;
+      // #app と #modal の**両方**を可視域に合わせる。モーダルを合わせ忘れると、
+      // キーボード表示中にボトムシートが画面外に出て「反応しない」ように見える。
+      for (const el of [$("app"), $("modal")]) {
+        el.style.height = vv.height + "px";
+        el.style.transform = "translateY(" + vv.offsetTop + "px)";
+      }
+      if (currentId) { fit.fit(); sendResize(); }
+    };
     if (vv) {
-      const app = $("app");
-      const applyViewport = () => {
-        app.style.height = vv.height + "px";
-        app.style.transform = "translateY(" + vv.offsetTop + "px)";
-        if (currentId) { fit.fit(); sendResize(); }
-      };
       vv.addEventListener("resize", applyViewport);
       vv.addEventListener("scroll", applyViewport);
       applyViewport();
