@@ -13,6 +13,12 @@ vendor-prebuilds/**
 dl/**
 *.vsix
 scratch-*
+# ⚠️ テスト生成物を .vsix に混ぜない。pairing-url.txt は**ペアリング秘密を含む**。
+# 実際に v0.2.0 で公開物に混入した(F20)。scratch-* だけの除外では防げなかった。
+pairing-url.txt
+*-result.txt
+*.local
+*.bak.*
 esbuild.js
 tsconfig.json
 .gitignore

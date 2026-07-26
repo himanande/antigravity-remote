@@ -8,7 +8,9 @@ import { createPairing, buildPairingUrl } from "./src/pairing";
 (async () => {
   const relay = process.env.RELAY_URL || "ws://localhost:8787";
   const clientBase = process.env.CLIENT_BASE || "http://localhost:8787";
-  const room = "e2ee-room";
+  // ⚠️ room は毎回乱数にする。固定名だと、過去に漏れたペアリング秘密が
+  // 将来のセッションでも有効になりうる(F20: pairing-url.txt が公開物に混入した)。
+  const room = "e2ee" + Math.random().toString(36).slice(2, 10) + Date.now();
   const pairing = await createPairing(room);
   const url = buildPairingUrl(pairing, clientBase, relay);
   fs.writeFileSync(__dirname + "/pairing-url.txt", url + "\n");

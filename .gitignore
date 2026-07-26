@@ -32,3 +32,8 @@ business/
 # wrangler dev のローカル秘密(コミットしない)
 relay-cf/.dev.vars
 relay-cf/.stats-key.local
+
+# テストハーネスが生成する成果物(ペアリング秘密を含む。絶対にコミット/同梱しない)
+pairing-url.txt
+*-result.txt
+*.local
