@@ -2,6 +2,25 @@ name = "antigravity-remote-relay"
 main = "src/worker.ts"
 compatibility_date = "2026-06-01"
 
+# routes を設定すると workers.dev は既定で無効になる。旧URL
+# (antigravity-remote-relay.<sub>.workers.dev)を設定済みの利用者が
+# 切れてしまうため、移行期間は明示的に有効のままにしておく。
+workers_dev = true
+
+# マネージドリレーの公開URL。拡張の既定 relayUrl に埋め込むため、
+# **一度出荷したら変更できない**前提で扱う(旧バージョンの利用者が見続けるURL)。
+# workers.dev ではなく独自ドメインにしてあるのは、将来リレーを別基盤へ移しても
+# このURLを維持できるようにするため。
+[[routes]]
+pattern = "relay.termhop.dev"
+custom_domain = true
+
+# apex はスマホPWAの配信用(QRに埋まるURL、将来のTWAの assetlinks.json 置き場)。
+# 同じ worker が両方を担うので追加コストはない。
+[[routes]]
+pattern = "termhop.dev"
+custom_domain = true
+
 # テナント=room ごとに 1 インスタンスへ集約する Durable Object
 [[durable_objects.bindings]]
 name = "RELAY_ROOM"

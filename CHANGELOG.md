@@ -3,7 +3,24 @@
 All notable changes to this extension are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] — unreleased
+## [0.2.0] — 2026-07-26
+
+### Added
+
+- **Zero-setup onboarding.** The extension now defaults to a free managed relay at `relay.termhop.dev`, with the phone web app served from `termhop.dev`. Installing and pairing no longer requires deploying anything. Traffic stays end-to-end encrypted, so the relay — including ours — only ever sees ciphertext.
+- [TERMS.md](./TERMS.md) covering the managed relay, and an updated [PRIVACY.md](./PRIVACY.md) describing exactly what the operator can and cannot see.
+
+### Changed
+
+- `antigravityRemote.relayUrl` defaults to `wss://relay.termhop.dev`; leaving it empty falls back to that same managed relay. Pointing it at your own relay remains fully supported.
+- Invalid relay URLs now produce a clear error instead of failing silently.
+
+### Security
+
+- Relay abuse protection: per-IP connection rate limiting (20/min, burst 40, 60s block) enforced in a Durable Object with durable state, room ID format validation, per-room connection caps (2 hosts / 6 clients), a 512 KB message cap and a per-socket flow limit.
+- Terminal scrollback is now capped by bytes (256 KB) as well as chunk count, bounding the size of a single snapshot message.
+
+## [0.1.0] — 2026-07-26
 
 First public release.
 

@@ -1,12 +1,14 @@
 # Privacy Policy — Antigravity Remote
 
-Last updated: 2026-07-25
+Last updated: 2026-07-26
 
-This document describes what the Antigravity Remote extension, the phone web app, and the relay do with your data. It applies to the software in this repository. If you deploy your own relay, you are the operator of that relay and this document describes what the code does, not a service commitment.
+This document describes what the Antigravity Remote extension, the phone web app, and the relay do with your data.
+
+By default the extension connects to a **managed relay operated by this project** at `relay.termhop.dev`, and the phone web app is served from `termhop.dev`. You can point the extension at your own relay instead — see [Running your own relay](#running-your-own-relay). If you do, you become the operator of that relay and the sections below describe what the code does, not a service commitment from us.
 
 ## Short version
 
-Your terminal contents are end-to-end encrypted between your PC and your phone. The relay cannot read them, and **nothing is stored** — the relay has no database and writes no logs of your session content.
+Your terminal contents are end-to-end encrypted between your PC and your phone. **The relay cannot read them, including the managed one we operate**, and **nothing is stored** — the relay has no database and writes no logs of your session content.
 
 ## What is *not* collected
 
@@ -22,7 +24,17 @@ A relay is a network intermediary, so it unavoidably observes:
 - **The room ID** used to pair the two sides. It is a 128-bit random value generated per pairing and carries no information about you.
 - **Connection metadata**: source IP address, connection time, and the size and timing of messages. This is inherent to any network connection.
 
-The relay in this repository keeps no persistent storage — it holds the two live WebSocket connections in memory and drops everything when they close. If you use Cloudflare Workers as the host, Cloudflare processes the connection as a network provider under its own terms.
+The relay in this repository keeps no persistent storage for your session — it holds the live WebSocket connections in memory and drops everything when they close. The one exception is abuse protection: when an IP address exceeds the connection rate limit, a single "blocked until" timestamp is stored for that address and expires within a minute. No connection history, no session records, no analytics.
+
+### The managed relay we operate
+
+The managed relay at `relay.termhop.dev` runs the code in this repository, unmodified, on Cloudflare Workers. Concretely, that means we can see connection metadata (your IP address, when you connected, how much data moved) as it passes through, and we **cannot** see your terminal contents. We do not log, retain, or analyse the metadata beyond what Cloudflare does automatically as the network provider, and we do not sell or share it. Cloudflare processes the traffic as our infrastructure provider under its own terms.
+
+The managed relay is provided free of charge and without a service-level commitment. It may be rate-limited, interrupted, or discontinued — see [TERMS.md](./TERMS.md).
+
+### Running your own relay
+
+If you would rather not route through us, deploy `relay-cf/` to your own Cloudflare account and set `antigravityRemote.relayUrl` to your URL. This is a first-class supported path, not a workaround: the extension, the web app, and the relay are all MIT-licensed and self-hostable. With your own relay, we see nothing at all.
 
 ## Data stored on your devices
 
@@ -37,10 +49,13 @@ If you enable notifications, your phone creates a subscription with its browser 
 
 ## Third parties
 
-| Party                         | Role                                  | What it sees                                       |
-| ----------------------------- | ------------------------------------- | -------------------------------------------------- |
-| Your relay host (e.g. Cloudflare) | transports the encrypted stream   | connection metadata, ciphertext                    |
-| Browser push service (e.g. FCM)   | delivers notifications            | your subscription and the notification text        |
+| Party                                | Role                                | What it sees                                |
+| ------------------------------------ | ----------------------------------- | ------------------------------------------- |
+| This project (managed relay, default) | transports the encrypted stream    | connection metadata, ciphertext             |
+| Cloudflare                            | hosts the relay                    | connection metadata, ciphertext             |
+| Browser push service (e.g. FCM)       | delivers notifications             | your subscription and the notification text |
+
+If you run your own relay, the first row does not apply.
 
 The extension contacts no other network service. The phone web app loads all of its dependencies from the relay that serves it — no third-party CDN is used.
 

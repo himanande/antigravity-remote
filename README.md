@@ -33,16 +33,26 @@ Remote-control tools for AI coding agents are tied to one specific agent and sho
 
 ## Quick start
 
+**No setup, no account, no server to deploy.**
+
 1. Install the extension in Antigravity (or any VS Code–compatible editor).
-2. Point it at a relay. Either deploy your own in a minute (see [`relay-cf/`](./relay-cf) — the Cloudflare Workers free tier is enough), or run the local one in [`relay/`](./relay) for LAN use.
-   ```jsonc
-   // settings.json
-   "antigravityRemote.relayUrl": "wss://<your-worker>.workers.dev"
-   ```
-3. Run **`Antigravity Remote: ペアリング開始(QR・E2EE)`** from the Command Palette.
-4. Scan the QR code with your phone. The web app opens and connects — you're in.
+2. Run **`Antigravity Remote: ペアリング開始(QR・E2EE)`** from the Command Palette.
+3. Scan the QR code with your phone. The web app opens and connects — you're in.
 
 The pairing QR embeds a fresh random room ID and the shared secret, so a QR is single-use and unguessable.
+
+By default this routes through a free managed relay we operate. **It cannot read your terminal** — encryption happens on your devices, so the relay only ever forwards ciphertext. It is provided as-is with no uptime guarantee ([terms](./TERMS.md)).
+
+### Prefer your own relay?
+
+Fully supported, and it takes about a minute. Deploy [`relay-cf/`](./relay-cf) to your own Cloudflare account (the free tier is enough), then:
+
+```jsonc
+// settings.json
+"antigravityRemote.relayUrl": "wss://<your-worker>.workers.dev"
+```
+
+Leave the setting empty to go back to the managed relay. For LAN-only use, there is also a minimal local relay in [`relay/`](./relay).
 
 ## How it works
 
@@ -123,13 +133,15 @@ Claude Code などのCLIをPCで起動したまま外出し、スマホのブラ
 
 ### 使い方
 
+**設定不要・アカウント不要・サーバー構築不要です。**
+
 1. 拡張をインストール
-2. リレーのURLを設定(自前デプロイ推奨。[`relay-cf/`](./relay-cf) を Cloudflare Workers の無料枠に1分でデプロイできます)
-   ```jsonc
-   "antigravityRemote.relayUrl": "wss://<your-worker>.workers.dev"
-   ```
-3. コマンドパレットで **`Antigravity Remote: ペアリング開始(QR・E2EE)`**
-4. 出てきたQRをスマホで読み取ると接続完了
+2. コマンドパレットで **`Antigravity Remote: ペアリング開始(QR・E2EE)`**
+3. 出てきたQRをスマホで読み取ると接続完了
+
+既定では本プロジェクトが運営する無料のマネージドリレーを経由します。**運営者にもターミナルの中身は読めません**(暗号化は端末側で行われ、リレーは暗号文しか扱いません)。無保証での提供です([利用規約](./TERMS.md))。
+
+自前のリレーを使いたい場合は、[`relay-cf/`](./relay-cf) をCloudflareの無料枠にデプロイして `antigravityRemote.relayUrl` を自分のURLに変えてください(空にすると既定に戻ります)。こちらも一級の利用方法として維持します。
 
 QRにはペアリングごとに新しい128bit乱数のroom IDと共有鍵が入るため、**使い捨てかつ推測不可能**です。
 

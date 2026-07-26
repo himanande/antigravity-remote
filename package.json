@@ -2,7 +2,7 @@
   "name": "antigravity-remote",
   "displayName": "Antigravity Remote",
   "description": "Control your IDE terminals (Claude Code, Gemini CLI, any CLI) from your phone. End-to-end encrypted, multi-session, two-way synced.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "himanande",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -65,8 +65,8 @@
       "properties": {
         "antigravityRemote.relayUrl": {
           "type": "string",
-          "default": "ws://localhost:8787",
-          "description": "接続先リレーのベースURL。ローカル簡易リレーは ws://localhost:8787、Cloudflareリレーは wss://<worker>.workers.dev。実際の接続は <base>/ws?room=&role=host"
+          "default": "wss://relay.termhop.dev",
+          "description": "接続先リレーのベースURL。既定は本プロジェクトが運営するマネージドリレー(通信はE2EEなので中身は運営者にも読めません)。自前で運営する場合は自分のURLに変更してください(relay-cf/ をCloudflare Workersにデプロイ)。実際の接続は <base>/ws?room=&role=host"
         },
         "antigravityRemote.room": {
           "type": "string",
@@ -75,8 +75,8 @@
         },
         "antigravityRemote.clientBaseUrl": {
           "type": "string",
-          "default": "",
-          "description": "スマホPWAの配信ベースURL(ペアリングQRのリンク先)。空ならrelayUrlから推定(ローカル簡易リレーはPWAも同居配信)"
+          "default": "https://termhop.dev",
+          "description": "スマホPWAの配信ベースURL(ペアリングQRのリンク先)。空にするとrelayUrlから推定します(自前リレーはPWAも同居配信するため空で構いません)"
         },
         "antigravityRemote.enablePush": {
           "type": "boolean",

@@ -13,6 +13,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification("Antigravity Remote: " + title, {
       body,
+      icon: "./icon-192.png",
+      badge: "./favicon.png",
       tag: "ag-" + (data.sessionId || "session"),
       data,
       renotify: true,

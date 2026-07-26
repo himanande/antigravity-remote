@@ -64,32 +64,31 @@ function deriveClientBase(cfg: vscode.WorkspaceConfiguration, relayUrl: string):
   return relayUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
 }
 
+/** 本プロジェクトが運営するマネージドリレー。設定を消す/空にすると常にこれに戻る。 */
+const DEFAULT_RELAY_URL = "wss://relay.termhop.dev";
+
+/** 設定値を読む。空欄はマネージドリレーへのフォールバックとして扱う。 */
+function getRelayUrl(cfg: vscode.WorkspaceConfiguration): string {
+  return (cfg.get<string>("relayUrl", "") ?? "").trim() || DEFAULT_RELAY_URL;
+}
+
 /**
- * リレーURLが一度も設定されていない場合に案内する。
+ * リレーURLの妥当性だけを確認する。
  *
- * 既定値は開発用の ws://localhost:8787 なので、そのまま実行すると
- * localhost を指すQRが出てスマホからは繋がらず、しかも失敗理由が分からない。
- * 「明示的に localhost を設定した人」(LAN利用)は妨げないよう、値そのものではなく
- * **設定済みかどうか**で判定する。
+ * 既定値はマネージドリレーなので、無設定でもそのまま動く。ここで弾きたいのは
+ * 「利用者が自前URLに書き換えたが綴りを間違えた」場合だけ。かつては未設定そのものを
+ * 警告していたが、既定値が機能するようになったため不要になった。
  */
 async function ensureRelayConfigured(cfg: vscode.WorkspaceConfiguration): Promise<boolean> {
-  const ins = cfg.inspect<string>("relayUrl");
-  if (ins?.globalValue || ins?.workspaceValue || ins?.workspaceFolderValue) return true;
+  if (/^wss?:\/\/.+/.test(getRelayUrl(cfg))) return true;
 
-  const SETUP = "セットアップ手順を開く";
   const SETTINGS = "設定を開く";
-  const pick = await vscode.window.showWarningMessage(
-    "リレーのURLが未設定です。Antigravity Remote は中継サーバーを1つ必要とします" +
-      "(Cloudflare Workers の無料枠に数分でデプロイできます)。設定するまでスマホからは接続できません。",
-    { modal: true },
-    SETUP,
+  const pick = await vscode.window.showErrorMessage(
+    `リレーのURLが不正です: ${cfg.get<string>("relayUrl", "")}。ws:// または wss:// で始まるURLを` +
+      "設定してください。設定を空にすると既定のマネージドリレーに戻ります。",
     SETTINGS
   );
-  if (pick === SETUP) {
-    void vscode.env.openExternal(
-      vscode.Uri.parse("https://github.com/himanande/antigravity-remote#quick-start")
-    );
-  } else if (pick === SETTINGS) {
+  if (pick === SETTINGS) {
     void vscode.commands.executeCommand(
       "workbench.action.openSettings",
       "antigravityRemote.relayUrl"
@@ -102,7 +101,7 @@ async function ensureRelayConfigured(cfg: vscode.WorkspaceConfiguration): Promis
 async function startPairing() {
   const cfg = vscode.workspace.getConfiguration("antigravityRemote");
   if (!(await ensureRelayConfigured(cfg))) return;
-  const relayUrl = cfg.get<string>("relayUrl", "ws://localhost:8787");
+  const relayUrl = getRelayUrl(cfg);
   const preset = cfg.get<string>("sessionPreset", "claude");
   const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? defaultCwd();
   const clientBase = deriveClientBase(cfg, relayUrl);
@@ -150,7 +149,7 @@ export function deactivate() {
 function connectRelay(cfg: vscode.WorkspaceConfiguration, pairing?: Pairing) {
   if (!active) return;
   if (active.relay) return;
-  const relayUrl = cfg.get<string>("relayUrl", "ws://localhost:8787");
+  const relayUrl = getRelayUrl(cfg);
   // ペアリング時はその乱数room、平文(startSession)時のみ設定のroomを使う。
   const room = pairing?.room ?? cfg.get<string>("room", "default-room");
   const relay = new RelayClient(relayUrl, active.manager, (m) => output.appendLine(m), room, pairing, getPushSender(cfg));
