@@ -60,7 +60,12 @@
     #term { flex:1; min-height:0; padding:4px; }
     /* スマホでスクロールバックを遡れるようにする。ネイティブのタッチスクロールも
        効くようにしつつ、JS 側(enableTouchScroll)でも行送りを補う。 */
-    #term .xterm-viewport { touch-action:pan-y; -webkit-overflow-scrolling:touch; }
+    #term .xterm-viewport { touch-action:pan-y; -webkit-overflow-scrolling:touch;
+      scrollbar-width:auto; scrollbar-color:#5a5a5f #1e1e1e; }
+    /* スマホでも指で掴める幅にする。既定の細いバーはタップ不能に近い。 */
+    #term .xterm-viewport::-webkit-scrollbar { width:12px; }
+    #term .xterm-viewport::-webkit-scrollbar-thumb { background:#5a5a5f; border-radius:6px; }
+    #term .xterm-viewport::-webkit-scrollbar-track { background:#1e1e1e; }
 
     /* スマホ用キーバー(端末ビュー下部)。矢印/Esc/Tab/Ctrl 等を補う。 */
     #keybar { display:flex; gap:6px; padding:6px 8px; background:var(--bar);
@@ -135,6 +140,8 @@
         <button id="ctrlBtn" data-key="ctrl">Ctrl</button>
         <button data-key="c-c">^C</button>
         <button data-key="clear" title="画面クリア(Ctrl+L)">clr</button>
+        <button data-key="pgup" title="1画面ぶん遡る">⤒</button>
+        <button data-key="pgdn" title="1画面ぶん進む">⤓</button>
         <span id="customKeys"></span>
         <button id="addKeyBtn" title="ショートカットを追加">＋</button>
       </div>
@@ -198,7 +205,7 @@
       el.addEventListener("touchstart", (e) => {
         lastY = e.touches.length === 1 ? e.touches[0].clientY : null;
         accum = 0;
-      }, { passive: true });
+      }, { passive: true, capture: true });
       el.addEventListener("touchmove", (e) => {
         if (lastY === null || e.touches.length !== 1) return;
         const y = e.touches[0].clientY;
@@ -212,8 +219,8 @@
           // ページのプルダウン更新などに取られないようにする
           if (e.cancelable) e.preventDefault();
         }
-      }, { passive: false });
-      el.addEventListener("touchend", () => { lastY = null; accum = 0; }, { passive: true });
+      }, { passive: false, capture: true });
+      el.addEventListener("touchend", () => { lastY = null; accum = 0; }, { passive: true, capture: true });
     })();
     // Ctrl トグルが armed のとき、ソフトキーボードで打った次の1文字を制御コードに変換する
     // (例: 'c' → Ctrl-C=\x03)。@..._ / A..Z / a..z を 0x1f マスクで制御文字化。
@@ -280,6 +287,13 @@
         if (ctrlArmed) term.focus(); // 次の1文字を拾うためキーボードを出す
         return;
       }
+      // ⤒⤓ は端末に送るキーではなく、こちらの表示をスクロールする操作。
+      // スマホではタッチのドラッグが端末側に吸われることがあるため、確実な経路を用意する。
+      if (k === "pgup" || k === "pgdn") {
+        const page = Math.max(1, term.rows - 1);
+        term.scrollLines(k === "pgup" ? -page : page);
+        return;
+      }
       if (KEYSEQ[k] !== undefined) sendMsg({ t: "input", sessionId: currentId, data: KEYSEQ[k] });
     });
 
@@ -329,12 +343,33 @@
     // ── 接続情報(ペアリングQRのクエリ)──
     //   ?relay=wss://<worker>.workers.dev&room=<id>&hpk=<host公開鍵>&ps=<ペアリング秘密>
     // hpk/ps があれば E2EE、無ければ平文(ローカル簡易リレー)にフォールバック。
+    // ⚠️ ペアリング情報は **必ず保存する**。manifest の start_url は "./" なので
+    // **ホーム画面(PWA)から起動するとクエリが丸ごと消える**。URLからしか読まないと、
+    // 別の部屋へ平文で繋ぎに行き「セッションが出ない・何も動かない」状態になる(F24)。
+    const PAIR_KEY = "ar_pairing_v1";
+    const loadPairing = () => {
+      try { return JSON.parse(localStorage.getItem(PAIR_KEY) || "null"); } catch { return null; }
+    };
     const params = new URLSearchParams(location.search);
-    const room = params.get("room") || "default-room";
-    const relayBase = (params.get("relay") || ((location.protocol === "https:" ? "wss://" : "ws://") + location.host))
+    let conn;
+    if (params.get("room")) {
+      conn = {
+        room: params.get("room"),
+        relay: (params.get("relay") || "").replace(/\/+$/, ""),
+        hpk: params.get("hpk"),
+        ps: params.get("ps"),
+      };
+      try { localStorage.setItem(PAIR_KEY, JSON.stringify(conn)); } catch { /* プライベートモード等 */ }
+      // ペアリング秘密をアドレスバーと履歴に残さない(保存済みなので機能には影響しない)
+      try { history.replaceState(null, "", location.pathname); } catch { /* noop */ }
+    } else {
+      conn = loadPairing() || {};
+    }
+    const room = conn.room || "default-room";
+    const relayBase = (conn.relay || ((location.protocol === "https:" ? "wss://" : "ws://") + location.host))
       .replace(/\/+$/, "");
-    const hpkParam = params.get("hpk");
-    const psParam = params.get("ps");
+    const hpkParam = conn.hpk || null;
+    const psParam = conn.ps || null;
     const wantE2ee = !!(hpkParam && psParam);
     const wsUrl = `${relayBase}/ws?room=${encodeURIComponent(room)}&role=client`;
 

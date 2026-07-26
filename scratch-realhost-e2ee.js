@@ -76,6 +76,7 @@ var PtySession = class _PtySession {
   // チャンク数の上限
   static SCROLLBACK_BYTES_MAX = 256 * 1024;
   // 合計バイト上限(snapshot 1通の大きさを縛る)
+  alive = true;
   dataListeners = /* @__PURE__ */ new Set();
   exitListeners = /* @__PURE__ */ new Set();
   constructor(opts) {
@@ -95,6 +96,7 @@ var PtySession = class _PtySession {
       for (const l2 of this.dataListeners) l2(chunk);
     });
     this.proc.onExit(({ exitCode }) => {
+      this.alive = false;
       for (const l2 of this.exitListeners) l2(exitCode);
     });
   }
@@ -106,12 +108,26 @@ var PtySession = class _PtySession {
       this.scrollbackBytes -= dropped ? dropped.length : 0;
     }
   }
+  // ⚠️ 終了済みの PTY を触ると node-pty が例外を投げ、**ホストプロセスごと落ちる**
+  // (`ioctl(2) failed, EBADF`)。スマホで終了済みセッションを開くと resize が飛ぶため、
+  // 誰でも簡単に踏める経路だった(F22)。以下は必ず生存確認 + try/catch で守る。
+  // 終了の検知(onExit)と操作の間には競合があるので、フラグだけでは不十分。
   /** リモートからの入力を PTY に書き込む(キー入力・許可プロンプト応答 FR-2.3)。 */
   write(data) {
-    this.proc.write(data);
+    if (!this.alive) return;
+    try {
+      this.proc.write(data);
+    } catch {
+      this.alive = false;
+    }
   }
   resize(cols, rows) {
-    if (cols > 0 && rows > 0) this.proc.resize(cols, rows);
+    if (!this.alive || cols <= 0 || rows <= 0) return;
+    try {
+      this.proc.resize(cols, rows);
+    } catch {
+      this.alive = false;
+    }
   }
   /** 再接続時に直近出力を再送する(FR-2.4)。 */
   getScrollback() {
@@ -126,6 +142,7 @@ var PtySession = class _PtySession {
     return () => this.exitListeners.delete(l2);
   }
   dispose() {
+    this.alive = false;
     try {
       this.proc.kill();
     } catch {
