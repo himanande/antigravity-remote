@@ -191,36 +191,48 @@
     term.open($("term"));
 
     // ── スマホのタッチでスクロールバックを遡る ──
-    // xterm.js の viewport はタッチのドラッグを拾わないことがあり(端末はテキスト選択が
-    // 優先される)、実機で「過去に遡れない」状態になる。指の移動量を行数に換算して
-    // scrollLines で明示的に送る。1本指のときだけ扱い、ピンチ等は邪魔しない。
+    // xterm.js の viewport はタッチのドラッグを拾わないことがあり、実機で「遡れない」
+    // 状態になる。かといって行単位(scrollLines)で動かすと**カクついて実用にならない**ため、
+    // viewport の scrollTop を**ピクセル単位で指に1:1追従**させ、離した後は慣性で減速させる。
+    // これでネイティブのスクロールと同等の手触りになる。
     (function enableTouchScroll() {
       const el = $("term");
-      let lastY = null, accum = 0;
-      const lineH = () => {
-        const row = el.querySelector(".xterm-rows > div");
-        const h = row && row.getBoundingClientRect().height;
-        return h && h > 0 ? h : 17;
-      };
+      let vp = null, lastY = 0, lastT = 0, vel = 0, raf = 0, dragging = false;
+      const stopInertia = () => { if (raf) { cancelAnimationFrame(raf); raf = 0; } };
+
       el.addEventListener("touchstart", (e) => {
-        lastY = e.touches.length === 1 ? e.touches[0].clientY : null;
-        accum = 0;
+        if (e.touches.length !== 1) return;
+        vp = el.querySelector(".xterm-viewport");
+        if (!vp) return;
+        stopInertia();
+        dragging = true; lastY = e.touches[0].clientY; lastT = performance.now(); vel = 0;
       }, { passive: true, capture: true });
+
       el.addEventListener("touchmove", (e) => {
-        if (lastY === null || e.touches.length !== 1) return;
-        const y = e.touches[0].clientY;
-        accum += lastY - y; // 上へスワイプ(y減少)= 新しい方へ
-        lastY = y;
-        const h = lineH();
-        const lines = Math.trunc(accum / h);
-        if (lines !== 0) {
-          accum -= lines * h;
-          term.scrollLines(lines);
-          // ページのプルダウン更新などに取られないようにする
-          if (e.cancelable) e.preventDefault();
-        }
+        if (!dragging || !vp || e.touches.length !== 1) return;
+        const y = e.touches[0].clientY, now = performance.now();
+        const dy = lastY - y;
+        vp.scrollTop += dy;                       // 1:1 追従
+        const dt = now - lastT;
+        if (dt > 0) vel = dy / dt;                // px/ms(離したときの初速)
+        lastY = y; lastT = now;
+        if (e.cancelable) e.preventDefault();     // ページ側のジェスチャに取られない
       }, { passive: false, capture: true });
-      el.addEventListener("touchend", () => { lastY = null; accum = 0; }, { passive: true, capture: true });
+
+      const release = () => {
+        dragging = false;
+        if (!vp || Math.abs(vel) < 0.02) return;  // ゆっくり離したら慣性なし
+        let v = vel * 16;                         // 1フレーム(約16ms)ぶんの移動量
+        const step = () => {
+          vp.scrollTop += v;
+          v *= 0.94;                              // 減衰
+          raf = Math.abs(v) > 0.3 ? requestAnimationFrame(step) : 0;
+        };
+        raf = requestAnimationFrame(step);
+      };
+      el.addEventListener("touchend", release, { passive: true, capture: true });
+      el.addEventListener("touchcancel", () => { dragging = false; stopInertia(); },
+        { passive: true, capture: true });
     })();
     // Ctrl トグルが armed のとき、ソフトキーボードで打った次の1文字を制御コードに変換する
     // (例: 'c' → Ctrl-C=\x03)。@..._ / A..Z / a..z を 0x1f マスクで制御文字化。
@@ -404,12 +416,23 @@
       $("dot").className = "dot " + (on ? "on" : "off");
     }
 
+    let hostSeen = false, noHostTimer = 0;
     function connect() {
       setConn("接続中…", false);
       keys = null; // 再接続で鍵交換をやり直す
       ws = new WebSocket(wsUrl);
       ws.onopen = () => {
         ws.send(JSON.stringify({ t: "hello", role: "client" }));
+        // ⚠️ リレーには繋がるがホスト(PC)が居ない、という状態がある。
+        // 保存済みペアリングで起動したとき、PC側の拡張が止まっている/再起動して
+        // ペアリングが切れていると、無言で待ち続けて「何も起きない」ように見える。
+        // 一定時間ホストの応答が無ければ、次にやることを明示する。
+        clearTimeout(noHostTimer);
+        noHostTimer = setTimeout(() => {
+          if (!hostSeen) {
+            setConn("PCが見つかりません。PC側で「ペアリング開始」を実行しQRを読み直してください", false);
+          }
+        }, 6000);
         if (wantE2ee) {
           // 鍵交換要求(平文): 自分の公開鍵 + ペアリング証明
           const proof = sodium.crypto_generichash(32,
@@ -424,7 +447,11 @@
           sendMsg({ t: "session.list.request" });
         }
       };
-      ws.onclose = () => { setConn("切断(再接続します)", false); setTimeout(connect, 2000); };
+      ws.onclose = () => {
+        hostSeen = false; clearTimeout(noHostTimer);
+        setConn("切断(再接続します)", false);
+        setTimeout(connect, 2000);
+      };
       ws.onerror = () => setConn("エラー", false);
       ws.onmessage = (ev) => {
         let env; try { env = JSON.parse(ev.data); } catch { return; }
@@ -441,6 +468,7 @@
     }
 
     function onKxAck() {
+      hostSeen = true; clearTimeout(noHostTimer);
       keys = deriveClientKeys(clientKp, hostPk);
       setConn("接続済み(E2EE)", true);
       sendMsg({ t: "client.hello", protocol: PROTOCOL_VERSION });
@@ -456,6 +484,7 @@
     function handle(m) {
       switch (m.t) {
         case "host.hello":
+          hostSeen = true; clearTimeout(noHostTimer);
           renderPresets(m.features && m.features.presets);
           // push 対応なら通知ボタンを出す
           if (m.features && m.features.push && m.vapidPublicKey && "serviceWorker" in navigator && "PushManager" in window) {
