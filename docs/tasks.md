@@ -133,7 +133,11 @@
   - 結果: `vsce package` **警告ゼロ**。
 
 ### Stage 1: 無料OSSローンチ
-- **TASK-24 [P1] 拡張 Open VSX 公開**: vsce package→publish。node-pty(TASK-21)前提。
+- **TASK-24 [P1] 拡張 Open VSX 公開**: status: DONE(2026-07-26) / owner: claude-opus+human:ike3
+  - **公開済**: `himanande.antigravity-remote` v0.1.0(MIT)。<https://open-vsx.org/extension/himanande/antigravity-remote>
+  - 配信物を検証: DL した .vsix は CI 産と同一サイズ(2,860,953B)、prebuilds 20件、README/icon/changelog/license/署名すべて配置済み。
+  - つまずき記録: ①Eclipse アカウントの **GitHub Username 欄の完全一致**が必須(Publisher Agreement のボタンが出ない原因)。②`npx ovsx` が `getaddrinfo ENOTFOUND` になる場合は**実行しているシェル環境**の問題(同一マシンでも curl は通るのに Node だけ失敗した)。通常のターミナルから実行して解決。
+  - 未了: 名前空間の `verified` は false(Eclipse による所有者確認を通すと true になる。機能上の制約はない)。
 - **TASK-25 [P1] PWA公開品質化**: アイコン各サイズ・manifest整備・apple-touch-icon・簡易オフライン。
 - **TASK-26 [P1] TWA→Play Store**: Bubblewrap・**assetlinks.json**(worker配信ドメインに設置)・署名鍵・掲載物(説明/スクショ/プライバシー)・$25登録。
 - **TASK-27 [P1] 軽量テレメトリ**: メッセージ件数・接続時間のみ計測(内容は送らずE2EE維持)。実原価検証+後の計測基盤。
@@ -146,6 +150,7 @@
 - フェーズ2 Agent Managerミラー/内部コマンド操作(競合と同じ土俵。差別化が固まってから判断)。
 
 ### 進捗ログ(新しいものを上に)
+- 2026-07-26 claude-opus: **TASK-24 Open VSX 公開 DONE → Stage0/Stage1の入口を突破**。`himanande.antigravity-remote` v0.1.0 を公開し、配信物(2,860,953B・prebuilds20件・README/icon/署名)まで検証。先立って TASK-22 を本番検証し、**Cloudflare の Rate Limiting binding が本番で無効**(実WS90本でも発火せず)、さらに自前実装の初版も**本番のDO退避でゆっくり接続する攻撃に回避された**ことを実測 → バケツ状態の永続化で解決(F18)。**次の最重要論点**: 現状は利用者が自分で Cloudflare リレーを立てる必要があり、これが採用の最大の障壁。ADR-007 の無料枠(フェアユース)はマネージドリレー提供が前提なので、**Stage1でマネージドリレーを出すかの判断が必要**。
 - 2026-07-25 claude-opus: **TASK-23 公開整備 DONE / GitHub公開 / CI成功で TASK-21 も実質決着**。LICENSE(MIT)・icon・README(ストア掲載版)・CHANGELOG・PRIVACY・package.jsonメタを整備し `vsce package` 警告ゼロ。公開時に課金戦略・想定収益・競合分析が晒される問題に気付き、ADR-007本文とStage2タスクを `business/`(gitignore)へ退避、`main` を新規履歴で開始(旧履歴はローカル `master`)。GitHub public 化 <https://github.com/himanande/antigravity-remote>、publisher=himanande。CI(build-vsix.yml)を実行し3ジョブ成功 → linux-x64/arm64 は **GLIBC_2.28**、**.vsix 2.91MB / 全6ターゲット**で PTY 起動確認(F16追記)。**次**: TASK-22(リレーのレート制限)→ TASK-24(Open VSX公開、要 himanande 名前空間+トークン)。TASK-21 の残は Windows/macOS 実機確認のみ。
 - 2026-07-25 claude-opus: **TASK-21 スパイク完了 → 最大の技術難所は消滅**。node-pty 1.1.0 が **N-API実装でABI安定**であることを実証(electron-rebuild 産バイナリが素のNodeで動く)。よって「Electron世代マトリクス」「起動時rebuild」は不要で、plat-arch同梱だけでよい。`scripts/prepare-native.js` + `.vscodeignore` + `npm run package` で **.vsix 2.62MB(5プラットフォーム)** を生成し、展開→PTY起動まで確認。Windows prebuilds の *.pdb 53MB 除外が効いた。⚠️Linuxは公式prebuild無し&開発機ビルドは GLIBC_2.42 要求のため、`.github/workflows/build-vsix.yml`(node:20-bullseye)でCIビルドする方針(F16)。**次**: TASK-23(GitHubリポジトリ作成+repositoryフィールド+LICENSE/icon)→ CI実行 → TASK-22(レート制限)。
 - 2026-07-23 claude-opus: **TASK-20 PC⇄スマホ双方向同期 実装(→要実機確認)**。src/terminalMirror.ts の TerminalMirror で、ホストの各 node-pty を VS Code Pseudoterminal として PC ターミナルタブにも表示。同じptyを両画面が見るため入力/出力が双方向同期(handleInput→write、setDimensions→resize、close→session close)。SessionManagerはvscode非依存維持、結合はextension層(makeActive で manager+mirror 生成、stopSizeで dispose)。open前live抑止+open時scrollback再生で取りこぼし/重複なし、closingガードで二重close防止。tsc/build PASS、実動作は要実機(F15)。またユーザー要望で **TASK-18 キーバーにユーザー定義ショートカット**(＋→管理シート、localStorage永続、\n/\t/\e解釈)も追加済(Playwright検証)。**次**: 実機で双方向同期の確認。その後フェーズ2(Agent Managerミラー)or 公開準備(TWA/ストア)。
