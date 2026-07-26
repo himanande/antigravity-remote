@@ -3,6 +3,14 @@
 All notable changes to this extension are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] — 2026-07-27
+
+### Added
+
+- **Read your agent conversations from your phone.** Past sessions from Antigravity's Agent Manager, the `agy` CLI, and Claude Code now appear in the session list and can be read remotely. They are read-only — nothing is sent back to the agent. Turn it off with `antigravityRemote.showAgentConversations`.
+  - Antigravity keeps IDE and CLI conversations in separate stores, which is why the IDE's conversations never show up in `agy`'s history. Both are listed here.
+- `agy` replaces `gemini` in the presets, since that is the CLI Antigravity actually installs.
+
 ## [0.3.0] — 2026-07-27
 
 ### Fixed

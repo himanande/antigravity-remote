@@ -6,6 +6,7 @@ import {
   type ClientToHost,
   type HostToClient,
   type HostFeatures,
+  type SessionMeta,
   type RelayEnvelope,
 } from "./protocol";
 import {
@@ -14,6 +15,7 @@ import {
 } from "./e2ee";
 import type { Pairing } from "./pairing";
 import type { PushSender } from "./push";
+import { listConversations, readConversation, type ConversationMeta } from "./conversations";
 
 /**
  * ホスト側リレークライアント。アウトバウンド WSS のみでリレーに接続し(F5 のセキュリティ
@@ -43,6 +45,36 @@ export class RelayClient {
     private readonly push?: PushSender,
     private readonly features: HostFeatures = { pty: true, agentMirror: false, agentControl: false, push: false }
   ) {}
+
+  /** 直近に一覧化した会話。subscribe でパスを引くために持つ。 */
+  private convCache: ConversationMeta[] = [];
+
+  /**
+   * エージェント会話(機能B)を読み取り専用のセッションとして一覧に混ぜる。
+   *
+   * pty の SessionManager には入れない。あちらは「動いているプロセス」を扱う場所で、
+   * 会話は**ファイルを読むだけ**の別物だから。ここで合流させるのが結合を最小にできる。
+   */
+  private conversationSessions(): SessionMeta[] {
+    if (!this.features.agentMirror) return [];
+    try {
+      this.convCache = listConversations();
+    } catch {
+      return [];
+    }
+    return this.convCache.map((c) => ({
+      id: c.id,
+      kind: "agent" as const,
+      title: c.title,
+      status: "idle" as const,
+      createdAt: c.updatedAt,
+      conversationId: c.id,
+    }));
+  }
+
+  private findConversation(id: string): ConversationMeta | undefined {
+    return this.convCache.find((c) => c.id === id);
+  }
 
   /** ベースURLに /ws?room=&role=host を付ける。ローカル簡易リレーはパス/クエリを無視し
    *  hello でロールを判定するため、この形でも後方互換で動く。 */
@@ -175,7 +207,7 @@ export class RelayClient {
       features: { ...this.features, push: !!this.push, presets: presetNames() },
       vapidPublicKey: this.push?.publicKey,
     });
-    this.toClient({ t: "session.list", sessions: this.sessions.list() });
+    this.toClient({ t: "session.list", sessions: [...this.sessions.list(), ...this.conversationSessions()] });
   }
 
   private handleApp(m: ClientToHost): void {
@@ -184,7 +216,7 @@ export class RelayClient {
         this.greet();
         break;
       case "session.list.request":
-        this.toClient({ t: "session.list", sessions: this.sessions.list() });
+        this.toClient({ t: "session.list", sessions: [...this.sessions.list(), ...this.conversationSessions()] });
         break;
       case "session.create":
         try {
@@ -195,9 +227,23 @@ export class RelayClient {
         }
         break;
       case "session.close":
+        if (this.findConversation(m.sessionId)) break; // 会話は閉じる対象がない
         this.sessions.close(m.sessionId);
         break;
       case "session.subscribe": {
+        // 会話(読み取り専用)。pty ではないので snapshot を返して終わり。
+        const conv = this.findConversation(m.sessionId);
+        if (conv) {
+          this.subscribed.add(m.sessionId);
+          let body: string;
+          try {
+            body = readConversation(conv);
+          } catch (e) {
+            body = `(会話の読み取りに失敗しました: ${(e as Error).message})\r\n`;
+          }
+          this.toClient({ t: "snapshot", sessionId: m.sessionId, data: body });
+          break;
+        }
         if (!this.sessions.has(m.sessionId)) {
           this.toClient({ t: "error", sessionId: m.sessionId, code: "unknown-session", message: "no such session" });
           break;
@@ -210,6 +256,8 @@ export class RelayClient {
         this.subscribed.delete(m.sessionId);
         break;
       case "input":
+        // 会話は読み取り専用。エージェントへの送信は機能C(実験・既定オフ)であり別物。
+        if (this.findConversation(m.sessionId)) break;
         this.sessions.write(m.sessionId, m.data);
         break;
       case "resize":

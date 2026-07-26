@@ -16,7 +16,8 @@ import { createPairing, buildPairingUrl } from "./src/pairing";
   fs.writeFileSync(__dirname + "/pairing-url.txt", url + "\n");
 
   const mgr = new SessionManager();
-  const rc = new RelayClient(relay, mgr, (m) => console.log("[host]", m), room, pairing);
+  const rc = new RelayClient(relay, mgr, (m) => console.log("[host]", m), room, pairing, undefined,
+    { pty: true, agentMirror: true, agentControl: false, push: false });
   rc.start();
   mgr.create({ preset: "bash", cwd: process.env.HOME });
   console.log("[host] E2EE host up");

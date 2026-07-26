@@ -165,7 +165,13 @@ function connectRelay(cfg: vscode.WorkspaceConfiguration, pairing?: Pairing) {
   const relayUrl = getRelayUrl(cfg);
   // ペアリング時はその乱数room、平文(startSession)時のみ設定のroomを使う。
   const room = pairing?.room ?? cfg.get<string>("room", "default-room");
-  const relay = new RelayClient(relayUrl, active.manager, (m) => output.appendLine(m), room, pairing, getPushSender(cfg));
+  // 機能B(エージェント会話の閲覧)。スマホからは既にフルシェルが使えるため、
+  // 会話閲覧が増やす露出は限定的と判断し既定で有効。切りたい人は設定で切れる。
+  const agentMirror = cfg.get<boolean>("showAgentConversations", true);
+  const relay = new RelayClient(
+    relayUrl, active.manager, (m) => output.appendLine(m), room, pairing, getPushSender(cfg),
+    { pty: true, agentMirror, agentControl: false, push: false }
+  );
   relay.start();
   active.relay = relay;
   active.pairing = pairing;

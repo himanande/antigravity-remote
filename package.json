@@ -2,7 +2,7 @@
   "name": "antigravity-remote",
   "displayName": "Antigravity Remote",
   "description": "Control your IDE terminals (Claude Code, Gemini CLI, any CLI) from your phone. End-to-end encrypted, multi-session, two-way synced.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "himanande",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -109,6 +109,11 @@
             "type": "string"
           },
           "markdownDescription": "スマホから起動できるコマンドを追加する(例: `{\"aider\": \"aider --no-auto-commits\"}`)。**この一覧はセキュリティ境界です**: スマホ側が送れるのはここで定義した名前だけで、コマンド文字列そのものは送れません。組み込み(claude / codex / gemini / bash)と同名にすると上書きします。"
+        },
+        "antigravityRemote.showAgentConversations": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Antigravity(IDE / agy CLI)と Claude Code の**過去の会話をスマホから閲覧**できるようにする(読み取り専用。送信はしません)。会話は端末と同じくE2EEで転送され、リレーからは読めません。"
         }
       }
     }

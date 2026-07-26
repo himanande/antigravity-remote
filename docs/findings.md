@@ -308,6 +308,26 @@
 - **Claude Code は JSONL** で、こちらは構造化されていて扱いやすい。`~/.claude/projects/<パスをスラッシュ置換したもの>/<session-id>.jsonl`(10プロジェクト)。1行1イベントで `type: user|assistant`、`message.content` が本文。
 - 帰結: 「過去のエージェント会話をスマホから閲覧する」(要件v0.3 の機能B)は **Antigravity(IDE/CLI両方)と Claude Code のいずれも実装可能**。protobuf 側はベストエフォート、JSONL 側は正確に読める。
 
+## F28. 機能B(エージェント会話の閲覧)を実装。SQLite は `node:sqlite` で読む
+- 確認日: 2026-07-27
+- **`node:sqlite`(Node標準)が Electron 39.2.3 / Node 22.21.1 でフラグ無しに使える**ことを実測。
+  ```bash
+  ELECTRON_RUN_AS_NODE=1 /opt/antigravity-ide/Antigravity-IDE/antigravity-ide \
+    -e "console.log(Object.keys(require('node:sqlite')))"   # → DatabaseSync,StatementSync,...
+  ```
+  better-sqlite3 等のネイティブモジュールを足すと **F16 で解消した ABI/配布の問題が再発する**ため採用しない。古いランタイムでは require が失敗するので、その場合は Antigravity 分だけ静かに諦める(Claude Code は JSONL なので無関係)。型は `@types/node@20` に無いので**使う分だけ自前で宣言**した(依存を上げない)。
+- 実装(`src/conversations.ts` + RelayClient):
+  - 3系統(Antigravity IDE / agy CLI / Claude Code)を新しい順に最大24件、`kind:"agent"` のセッションとして一覧へ合流。**SessionManager には入れない**(あちらは「動いているプロセス」を扱う場所で、会話はファイルを読むだけの別物)。
+  - subscribe で本文を snapshot として返す。**入力・close は無視**(読み取り専用)。
+  - 転送上限120KB。超える場合は**古い方から捨てる**(直近が読みたいはずなので)。
+- ⚠️ **本文の抽出には2段階のフィルタが要る**:
+  1. `step_payload` から可読文字列を取り出す際、**日本語(UTF-8マルチバイト)を必ず含める**(F27)。
+  2. それだけでは `{"AbsolutePath":...}` のようなツール呼び出しJSONや内部IDが並び、**読み物にならない**。`looksLikeProse()` で「`{`/`[` 始まり」「UUIDのみ」「URL/ファイル参照」「文字比率50%未満」を落として初めて実用になった。
+- Claude Code(JSONL)側も `<local-command-caveat>` `<command-name>` 等のCLI挿入ブロックを除外する必要がある。
+- 性能: 一覧化 93ms(24件)。**題名は先頭64KBだけ読む**(会話ログは10MB超があり全読みは重い)。結果は10秒キャッシュ。
+- 検証(実機同等・Playwright): 一覧に **pty 1件 + agent 24件**、Antigravity IDE の会話を開いて日本語の本文が読める、Claude Code の会話も同様、**会話へ入力しても何も起きない**(読み取り専用)ことを確認。
+- 残る粗さ: agy と Claude Code の一部で題名がノイズのまま(`u{"DirectoryPath"...`、`<ide_opened_file>...`)。読めれば実用上は困らないので MVP では許容。
+
 ---
 ### 追記のしかた
 新しい事実を確認したら F番号を採番して追記。**必ず再現コマンドと確認日を書く**。既存項目が古くなったら「⚠️ 20xx-xx-xx時点で無効」と追記(削除しない=履歴を残す)。

@@ -23,7 +23,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // scratch-realhost-e2ee.ts
-var fs2 = __toESM(require("fs"));
+var fs3 = __toESM(require("fs"));
 
 // src/sessionManager.ts
 var path2 = __toESM(require("path"));
@@ -61,7 +61,9 @@ try {
 var BUILTIN_PRESETS = {
   claude: { file: "claude", args: [] },
   codex: { file: "codex", args: [] },
-  gemini: { file: "gemini", args: [] },
+  // Antigravity の CLI。IDE内蔵の Agent Manager とは会話の保存先が別
+  // (~/.gemini/antigravity-cli/ と ~/.gemini/antigravity-ide/)。
+  agy: { file: "agy", args: [] },
   bash: { file: "bash", args: ["-l"] }
 };
 var PRESETS = { ...BUILTIN_PRESETS };
@@ -3755,6 +3757,239 @@ function open(keys, env) {
   }
 }
 
+// src/conversations.ts
+var fs2 = __toESM(require("fs"));
+var os2 = __toESM(require("os"));
+var path3 = __toESM(require("path"));
+var MAX_TRANSCRIPT_BYTES = 120 * 1024;
+var MAX_CONVERSATIONS = 24;
+var TITLE_SCAN = 40;
+var SOURCE_LABEL = {
+  "antigravity-ide": "Antigravity",
+  "antigravity-cli": "agy",
+  "claude-code": "Claude Code"
+};
+function home() {
+  return process.env.HOME ?? os2.homedir();
+}
+function safeStat(p2) {
+  try {
+    return fs2.statSync(p2);
+  } catch {
+    return void 0;
+  }
+}
+function listFiles(dir, ext) {
+  try {
+    return fs2.readdirSync(dir).filter((f2) => f2.endsWith(ext)).map((f2) => path3.join(dir, f2));
+  } catch {
+    return [];
+  }
+}
+var sqliteMod;
+function sqlite() {
+  if (sqliteMod !== void 0) return sqliteMod;
+  try {
+    sqliteMod = require("node:sqlite");
+  } catch {
+    sqliteMod = null;
+  }
+  return sqliteMod;
+}
+function extractText(buf) {
+  const s3 = buf.toString("utf8");
+  let best = "";
+  let cur = "";
+  for (const ch of s3) {
+    const c2 = ch.codePointAt(0);
+    const printable = c2 === 10 || c2 === 9 || c2 >= 32 && c2 !== 127 && c2 !== 65533;
+    if (printable) {
+      cur += ch;
+    } else {
+      if (cur.length > best.length) best = cur;
+      cur = "";
+    }
+  }
+  if (cur.length > best.length) best = cur;
+  return best.trim();
+}
+function looksLikeProse(text) {
+  const s3 = text.trim();
+  if (s3.length < 8) return false;
+  if (s3.startsWith("{") || s3.startsWith("[")) return false;
+  if (/^[0-9a-f-]{8,}$/i.test(s3)) return false;
+  if (/file:\/\/|^[a-z]+:\/\//i.test(s3)) return false;
+  if (/^[^\s]+\.(jsonl|db|json|log|md|ts|js|py)$/i.test(s3)) return false;
+  const letters = (s3.match(/[\p{L}\p{N}]/gu) ?? []).length;
+  if (letters / s3.length < 0.5) return false;
+  const uuid = (s3.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) ?? []).join("");
+  return uuid.length < s3.length * 0.5;
+}
+function roleOf(stepType) {
+  if (stepType === 14) return "user";
+  if (stepType === 15) return "model";
+  if (stepType === 23) return "summary";
+  return null;
+}
+function readAntigravitySteps(dbPath, limit) {
+  const mod = sqlite();
+  if (!mod) return [];
+  let db;
+  try {
+    db = new mod.DatabaseSync(dbPath, { readOnly: true });
+    const sql = limit ? "SELECT step_type, step_payload FROM steps ORDER BY idx ASC LIMIT ?" : "SELECT step_type, step_payload FROM steps ORDER BY idx ASC";
+    const rows = limit ? db.prepare(sql).all(limit) : db.prepare(sql).all();
+    const out = [];
+    for (const r2 of rows) {
+      const role = roleOf(Number(r2.step_type));
+      if (!role || !r2.step_payload) continue;
+      const text = extractText(Buffer.from(r2.step_payload));
+      if (looksLikeProse(text)) out.push({ role, text });
+    }
+    return out;
+  } catch {
+    return [];
+  } finally {
+    try {
+      db?.close();
+    } catch {
+    }
+  }
+}
+var HEAD_BYTES = 64 * 1024;
+function readTextHead(file, maxBytes) {
+  let fd;
+  try {
+    fd = fs2.openSync(file, "r");
+    const buf = Buffer.alloc(maxBytes);
+    const n2 = fs2.readSync(fd, buf, 0, maxBytes, 0);
+    const s3 = buf.subarray(0, n2).toString("utf8");
+    return s3.slice(0, s3.lastIndexOf("\n") + 1);
+  } catch {
+    return "";
+  } finally {
+    try {
+      if (fd !== void 0) fs2.closeSync(fd);
+    } catch {
+    }
+  }
+}
+function readClaudeCode(file, maxMessages) {
+  let raw;
+  try {
+    raw = maxMessages ? readTextHead(file, HEAD_BYTES) : fs2.readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    let d2;
+    try {
+      d2 = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (d2.type !== "user" && d2.type !== "assistant") continue;
+    const c2 = d2.message?.content;
+    let text = "";
+    if (typeof c2 === "string") text = c2;
+    else if (Array.isArray(c2)) {
+      text = c2.map((x2) => x2 && typeof x2 === "object" && "text" in x2 ? String(x2.text) : "").filter(Boolean).join("\n");
+    }
+    text = text.trim();
+    if (text.startsWith("<local-command-caveat>") || text.startsWith("<command-name>")) continue;
+    if (text.startsWith("<command-message>") || text.startsWith("<local-command-stdout>")) continue;
+    if (!looksLikeProse(text)) continue;
+    out.push({ role: d2.type === "user" ? "user" : "model", text });
+    if (maxMessages && out.length >= maxMessages) break;
+  }
+  return out;
+}
+function titleFrom(msgs, fallback) {
+  const first = msgs.find((m2) => m2.role === "user" && looksLikeProse(m2.text)) ?? msgs[0];
+  if (!first) return fallback;
+  const line = first.text.replace(/\s+/g, " ").trim();
+  return line.length > 48 ? line.slice(0, 48) + "\u2026" : line || fallback;
+}
+var cache;
+var CACHE_MS = 1e4;
+function listConversations() {
+  if (cache && Date.now() - cache.at < CACHE_MS) return cache.items;
+  const items = scanConversations();
+  cache = { at: Date.now(), items };
+  return items;
+}
+function scanConversations() {
+  const h2 = home();
+  const found = [];
+  const agDirs = [
+    ["antigravity-ide", path3.join(h2, ".gemini", "antigravity-ide", "conversations")],
+    ["antigravity-cli", path3.join(h2, ".gemini", "antigravity-cli", "conversations")]
+  ];
+  for (const [source, dir] of agDirs) {
+    for (const f2 of listFiles(dir, ".db")) {
+      const st2 = safeStat(f2);
+      if (!st2) continue;
+      found.push({
+        id: `${source === "antigravity-ide" ? "ide" : "agy"}:${path3.basename(f2, ".db")}`,
+        source,
+        title: "",
+        updatedAt: st2.mtimeMs,
+        path: f2
+      });
+    }
+  }
+  const projects = path3.join(h2, ".claude", "projects");
+  try {
+    for (const proj of fs2.readdirSync(projects)) {
+      for (const f2 of listFiles(path3.join(projects, proj), ".jsonl")) {
+        const st2 = safeStat(f2);
+        if (!st2 || st2.size === 0) continue;
+        found.push({
+          id: `cc:${proj}/${path3.basename(f2, ".jsonl")}`,
+          source: "claude-code",
+          title: "",
+          updatedAt: st2.mtimeMs,
+          path: f2
+        });
+      }
+    }
+  } catch {
+  }
+  found.sort((a2, b2) => b2.updatedAt - a2.updatedAt);
+  const top = found.slice(0, MAX_CONVERSATIONS);
+  for (const m2 of top) {
+    const msgs = m2.source === "claude-code" ? readClaudeCode(m2.path, TITLE_SCAN) : readAntigravitySteps(m2.path, TITLE_SCAN);
+    m2.title = `${SOURCE_LABEL[m2.source]}: ${titleFrom(msgs, path3.basename(m2.path))}`;
+  }
+  return top;
+}
+function readConversation(meta) {
+  const msgs = meta.source === "claude-code" ? readClaudeCode(meta.path) : readAntigravitySteps(meta.path);
+  if (msgs.length === 0) {
+    return `(${SOURCE_LABEL[meta.source]} \u306E\u4F1A\u8A71\u3092\u8AAD\u307F\u53D6\u308C\u307E\u305B\u3093\u3067\u3057\u305F)\r
+`;
+  }
+  const label = { user: "\u25B6 \u3042\u306A\u305F", model: "\u25C0 \u30A8\u30FC\u30B8\u30A7\u30F3\u30C8", summary: "\u2261 \u8981\u7D04" };
+  const blocks = msgs.map((m2) => `${label[m2.role] ?? m2.role}\r
+${m2.text.replace(/\n/g, "\r\n")}\r
+`);
+  let total = 0;
+  const kept = [];
+  for (let i2 = blocks.length - 1; i2 >= 0; i2--) {
+    total += Buffer.byteLength(blocks[i2]);
+    if (total > MAX_TRANSCRIPT_BYTES) {
+      kept.unshift(`(\u3053\u308C\u4EE5\u524D\u306E ${i2 + 1} \u4EF6\u306F\u9577\u3044\u305F\u3081\u7701\u7565\u3057\u307E\u3057\u305F)\r
+\r
+`);
+      break;
+    }
+    kept.unshift(blocks[i2]);
+  }
+  return kept.join("\r\n");
+}
+
 // src/relayClient.ts
 var RelayClient = class {
   constructor(url, sessions, log, room = "default-room", pairing, push, features = { pty: true, agentMirror: false, agentControl: false, push: false }) {
@@ -3774,6 +4009,33 @@ var RelayClient = class {
   managerDisposers = [];
   // E2EE: ペアリング済みなら鍵交換後に導出した session 鍵。未確立なら undefined。
   clientKeys;
+  /** 直近に一覧化した会話。subscribe でパスを引くために持つ。 */
+  convCache = [];
+  /**
+   * エージェント会話(機能B)を読み取り専用のセッションとして一覧に混ぜる。
+   *
+   * pty の SessionManager には入れない。あちらは「動いているプロセス」を扱う場所で、
+   * 会話は**ファイルを読むだけ**の別物だから。ここで合流させるのが結合を最小にできる。
+   */
+  conversationSessions() {
+    if (!this.features.agentMirror) return [];
+    try {
+      this.convCache = listConversations();
+    } catch {
+      return [];
+    }
+    return this.convCache.map((c2) => ({
+      id: c2.id,
+      kind: "agent",
+      title: c2.title,
+      status: "idle",
+      createdAt: c2.updatedAt,
+      conversationId: c2.id
+    }));
+  }
+  findConversation(id) {
+    return this.convCache.find((c2) => c2.id === id);
+  }
   /** ベースURLに /ws?room=&role=host を付ける。ローカル簡易リレーはパス/クエリを無視し
    *  hello でロールを判定するため、この形でも後方互換で動く。 */
   endpoint() {
@@ -3891,7 +4153,7 @@ var RelayClient = class {
       features: { ...this.features, push: !!this.push, presets: presetNames() },
       vapidPublicKey: this.push?.publicKey
     });
-    this.toClient({ t: "session.list", sessions: this.sessions.list() });
+    this.toClient({ t: "session.list", sessions: [...this.sessions.list(), ...this.conversationSessions()] });
   }
   handleApp(m2) {
     switch (m2?.t) {
@@ -3899,7 +4161,7 @@ var RelayClient = class {
         this.greet();
         break;
       case "session.list.request":
-        this.toClient({ t: "session.list", sessions: this.sessions.list() });
+        this.toClient({ t: "session.list", sessions: [...this.sessions.list(), ...this.conversationSessions()] });
         break;
       case "session.create":
         try {
@@ -3909,9 +4171,23 @@ var RelayClient = class {
         }
         break;
       case "session.close":
+        if (this.findConversation(m2.sessionId)) break;
         this.sessions.close(m2.sessionId);
         break;
       case "session.subscribe": {
+        const conv = this.findConversation(m2.sessionId);
+        if (conv) {
+          this.subscribed.add(m2.sessionId);
+          let body;
+          try {
+            body = readConversation(conv);
+          } catch (e) {
+            body = `(\u4F1A\u8A71\u306E\u8AAD\u307F\u53D6\u308A\u306B\u5931\u6557\u3057\u307E\u3057\u305F: ${e.message})\r
+`;
+          }
+          this.toClient({ t: "snapshot", sessionId: m2.sessionId, data: body });
+          break;
+        }
         if (!this.sessions.has(m2.sessionId)) {
           this.toClient({ t: "error", sessionId: m2.sessionId, code: "unknown-session", message: "no such session" });
           break;
@@ -3924,6 +4200,7 @@ var RelayClient = class {
         this.subscribed.delete(m2.sessionId);
         break;
       case "input":
+        if (this.findConversation(m2.sessionId)) break;
         this.sessions.write(m2.sessionId, m2.data);
         break;
       case "resize":
@@ -3991,9 +4268,17 @@ function buildPairingUrl(p2, clientBase, relayBase) {
   const room = "e2ee" + Math.random().toString(36).slice(2, 10) + Date.now();
   const pairing = await createPairing(room);
   const url = buildPairingUrl(pairing, clientBase, relay);
-  fs2.writeFileSync(__dirname + "/pairing-url.txt", url + "\n");
+  fs3.writeFileSync(__dirname + "/pairing-url.txt", url + "\n");
   const mgr = new SessionManager();
-  const rc = new RelayClient(relay, mgr, (m2) => console.log("[host]", m2), room, pairing);
+  const rc = new RelayClient(
+    relay,
+    mgr,
+    (m2) => console.log("[host]", m2),
+    room,
+    pairing,
+    void 0,
+    { pty: true, agentMirror: true, agentControl: false, push: false }
+  );
   rc.start();
   mgr.create({ preset: "bash", cwd: process.env.HOME });
   console.log("[host] E2EE host up");
