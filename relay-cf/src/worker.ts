@@ -14,6 +14,94 @@
 export interface Env {
   RELAY_ROOM: DurableObjectNamespace;
   RATE_GATE: DurableObjectNamespace;
+  STATS: DurableObjectNamespace;
+  /** /stats 参照用の共有秘密。未設定なら /stats は 404 を返す(=機能ごと無効)。 */
+  STATS_KEY?: string;
+}
+
+// --- 軽量テレメトリ(TASK-27 / ADR-009)---
+// 記録するのは **UTCの日ごとの集計値だけ**。個票(1接続ごとの記録)は作らないので、
+// 後から特定の人やセッションを辿ることが原理的にできない。IP・room ID・日より
+// 細かい時刻・ペイロードは一切保存しない。
+interface Counters {
+  /** 切断まで到達した接続の本数 */
+  sessions: number;
+  /** 合計接続秒数 */
+  connSeconds: number;
+  msgHostToClient: number;
+  msgClientToHost: number;
+  /** 中継バイト数(JSON文字列長の合計。概算) */
+  bytes: number;
+  /** IP がレート制限でブロックされた**回数**(拒否リクエスト数ではない) */
+  rateLimited: number;
+  /** サイズ超過で切断した回数 */
+  tooLarge: number;
+  /** 満室で接続を断った回数 */
+  roomFull: number;
+}
+
+const COUNTER_KEYS: (keyof Counters)[] = [
+  "sessions",
+  "connSeconds",
+  "msgHostToClient",
+  "msgClientToHost",
+  "bytes",
+  "rateLimited",
+  "tooLarge",
+  "roomFull",
+];
+
+const zeroCounters = (): Counters =>
+  Object.fromEntries(COUNTER_KEYS.map((k) => [k, 0])) as unknown as Counters;
+
+const dayId = (t = Date.now()): string => "stats:" + new Date(t).toISOString().slice(0, 10);
+
+/** 集計値を当日の StatsDay DO に加算する。失敗しても本来の中継は止めない。 */
+async function bumpStats(env: Env, delta: Partial<Counters>): Promise<void> {
+  try {
+    const stub = env.STATS.get(env.STATS.idFromName(dayId()));
+    await stub.fetch("https://stats/bump", { method: "POST", body: JSON.stringify(delta) });
+  } catch {
+    /* 計測はベストエフォート。落ちてもサービスは続ける */
+  }
+}
+
+/**
+ * 1日分の集計カウンタ。日ごとに別 DO(idFromName("stats:YYYY-MM-DD"))なので、
+ * 過去分は触らずに済み、保持期間の運用も日単位で考えられる。
+ */
+export class StatsDay {
+  constructor(private readonly state: DurableObjectState, _env: Env) {}
+
+  async fetch(req: Request): Promise<Response> {
+    const path = new URL(req.url).pathname;
+    if (path === "/bump") {
+      const delta = (await req.json()) as Partial<Counters>;
+      const cur = (await this.state.storage.get<Counters>("c")) ?? zeroCounters();
+      for (const k of COUNTER_KEYS) {
+        const v = delta[k];
+        // 不正値で集計を壊さない(負値・NaN・非数値は無視)
+        if (typeof v === "number" && Number.isFinite(v) && v >= 0) cur[k] += v;
+      }
+      await this.state.storage.put("c", cur);
+      return new Response("ok");
+    }
+    if (path === "/read") {
+      const cur = (await this.state.storage.get<Counters>("c")) ?? zeroCounters();
+      return new Response(JSON.stringify(cur), {
+        headers: { "content-type": "application/json" },
+      });
+    }
+    return new Response("not found", { status: 404 });
+  }
+}
+
+/** 長さを揃えた上で全バイトを比較する(早期returnで秘密長や一致位置を漏らさない)。 */
+function secretEquals(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }
 
 const ROLES = new Set(["host", "client"]);
@@ -29,6 +117,25 @@ export default {
     if (url.pathname === "/" || url.pathname === "/health") {
       return new Response("antigravity-remote relay: ok", {
         headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    // 運営者用: 直近数日の集計値。秘密が未設定なら存在自体を伏せる(404)。
+    if (url.pathname === "/stats") {
+      const key = url.searchParams.get("key") ?? "";
+      if (!env.STATS_KEY || !secretEquals(key, env.STATS_KEY)) {
+        return new Response("not found", { status: 404 });
+      }
+      const days = Math.min(Math.max(Number(url.searchParams.get("days") ?? 14), 1), 60);
+      const out: Record<string, Counters> = {};
+      for (let i = 0; i < days; i++) {
+        const t = Date.now() - i * 86_400_000;
+        const id = dayId(t);
+        const res = await env.STATS.get(env.STATS.idFromName(id)).fetch("https://stats/read");
+        out[id.slice(6)] = (await res.json()) as Counters;
+      }
+      return new Response(JSON.stringify(out, null, 2), {
+        headers: { "content-type": "application/json" },
       });
     }
 
@@ -91,7 +198,10 @@ export class RateGate {
   private s: GateState = { tokens: GATE_BURST, ts: Date.now(), blockedUntil: 0 };
   private loaded = false;
 
-  constructor(private readonly state: DurableObjectState, _env: Env) {}
+  constructor(
+    private readonly state: DurableObjectState,
+    private readonly env: Env
+  ) {}
 
   async fetch(_req: Request): Promise<Response> {
     if (!this.loaded) {
@@ -111,6 +221,9 @@ export class RateGate {
     if (this.s.tokens < 1) {
       this.s.blockedUntil = now + GATE_BLOCK_MS;
       await this.state.storage.put("gate", this.s);
+      // 計測は「ブロックに入った回数」のみ。拒否リクエスト1件ごとに数えると
+      // 攻撃中に計測自体がコストになるため。
+      await bumpStats(this.env, { rateLimited: 1 });
       return new Response("blocked", { status: 429 });
     }
     this.s.tokens -= 1;
@@ -121,7 +234,13 @@ export class RateGate {
 
 interface Attachment {
   role: "host" | "client";
+  /** 接続時刻(ms)。**attachment は DO の退避をまたいで保持される**ので、
+   *  接続秒数の算出はメモリではなくここに持たせる(F18の教訓)。 */
+  ts?: number;
 }
+
+/** 集計をまとめて送るしきい値。1メッセージ1書き込みは無料枠を焼くため必須。 */
+const STATS_FLUSH_EVERY = 100;
 
 // --- 1 room 内の上限(TASK-22)---
 // host は再接続の重なりを考慮して 2 まで許す。client は同時に見る端末の想定数。
@@ -147,7 +266,15 @@ export class RelayRoom {
   // 休止するのは無通信のときだけなので実害はない。
   private readonly buckets = new WeakMap<WebSocket, Bucket>();
 
-  constructor(private readonly state: DurableObjectState, _env: Env) {}
+  // 未送信の集計。**メモリなので DO の退避で失われる**。STATS_FLUSH_EVERY 件ごとと
+  // 切断時に送るので、失われるのは最大 STATS_FLUSH_EVERY-1 件(原価把握には十分)。
+  private pending: Partial<Counters> = {};
+  private pendingMsgs = 0;
+
+  constructor(
+    private readonly state: DurableObjectState,
+    private readonly env: Env
+  ) {}
 
   async fetch(req: Request): Promise<Response> {
     const role = new URL(req.url).searchParams.get("role") as "host" | "client";
@@ -156,6 +283,7 @@ export class RelayRoom {
     // ソケットを積み上げるだけで DO のメモリと中継コストを増やせてしまう。
     const limit = role === "host" ? MAX_HOSTS : MAX_CLIENTS;
     if (this.state.getWebSockets(role).length >= limit) {
+      await bumpStats(this.env, { roomFull: 1 });
       return new Response("room is full", { status: 429, headers: { "retry-after": "30" } });
     }
 
@@ -163,9 +291,9 @@ export class RelayRoom {
     const client = pair[0];
     const server = pair[1];
 
-    // Hibernation 対応で accept。role は attachment に載せて休止をまたいで保持する。
+    // Hibernation 対応で accept。role と接続時刻を attachment に載せて休止をまたいで保持する。
     this.state.acceptWebSocket(server, [role]);
-    server.serializeAttachment({ role } satisfies Attachment);
+    server.serializeAttachment({ role, ts: Date.now() } satisfies Attachment);
 
     // 参加を相手ロールへ通知(host は peer-joined(client) を受けて挨拶する)
     this.notifyPeers(server, role, { t: "peer-joined", role });
@@ -173,10 +301,11 @@ export class RelayRoom {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): void {
+  async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== "string") return; // 本プロトコルは JSON テキストのみ
     if (message.length > MSG_MAX_BYTES) {
       ws.close(1009, "message too large");
+      await this.flushStats({ tooLarge: 1 });
       return;
     }
     if (!this.consumeToken(ws)) {
@@ -195,21 +324,51 @@ export class RelayRoom {
 
     const self = this.roleOf(ws);
     if (!self) return;
-    // 相手ロールへそのまま中継(payload は解釈しない)
+    // 相手ロールへそのまま中継(payload は解釈しない)。
+    // 集計より**先に**中継する(計測が遅延の原因にならないように)。
     const targetRole = self === "host" ? "client" : "host";
     for (const peer of this.state.getWebSockets(targetRole)) {
       trySend(peer, message);
     }
+
+    this.note(self === "host" ? "msgHostToClient" : "msgClientToHost", 1);
+    this.note("bytes", message.length);
+    this.pendingMsgs += 1;
+    if (this.pendingMsgs >= STATS_FLUSH_EVERY) await this.flushStats();
   }
 
-  webSocketClose(ws: WebSocket): void {
-    const role = this.roleOf(ws);
-    if (role) this.notifyPeers(ws, role, { t: "peer-left", role });
+  async webSocketClose(ws: WebSocket): Promise<void> {
+    await this.onGone(ws);
   }
 
-  webSocketError(ws: WebSocket): void {
-    const role = this.roleOf(ws);
-    if (role) this.notifyPeers(ws, role, { t: "peer-left", role });
+  async webSocketError(ws: WebSocket): Promise<void> {
+    await this.onGone(ws);
+  }
+
+  /** 切断/エラー共通: 相手へ通知し、この接続分の集計を確定させる。 */
+  private async onGone(ws: WebSocket): Promise<void> {
+    const att = ws.deserializeAttachment() as Attachment | null;
+    if (att?.role) this.notifyPeers(ws, att.role, { t: "peer-left", role: att.role });
+    const extra: Partial<Counters> = { sessions: 1 };
+    if (att?.ts) extra.connSeconds = Math.max(0, Math.round((Date.now() - att.ts) / 1000));
+    await this.flushStats(extra);
+  }
+
+  private note(k: keyof Counters, n: number): void {
+    this.pending[k] = (this.pending[k] ?? 0) + n;
+  }
+
+  /** 溜めた集計を当日ぶんへ送る。空なら何もしない。 */
+  private async flushStats(extra?: Partial<Counters>): Promise<void> {
+    const delta = { ...this.pending, ...{} } as Partial<Counters>;
+    if (extra) for (const k of COUNTER_KEYS) {
+      const v = extra[k];
+      if (typeof v === "number") delta[k] = (delta[k] ?? 0) + v;
+    }
+    this.pending = {};
+    this.pendingMsgs = 0;
+    if (Object.keys(delta).length === 0) return;
+    await bumpStats(this.env, delta);
   }
 
   /** トークンバケツ。1秒あたり RATE_PER_SEC 回復、上限 RATE_BURST。 */

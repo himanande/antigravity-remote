@@ -15,7 +15,8 @@ Your terminal contents are end-to-end encrypted between your PC and your phone. 
 - **Terminal input and output.** Encrypted on your PC with a key established directly with your phone (X25519 key exchange, XSalsa20-Poly1305 authenticated encryption). The relay only forwards opaque ciphertext.
 - **Source code, file contents, prompts, or AI agent conversations.** The extension does not read your files or upload your workspace.
 - **Accounts.** The current version has no sign-up, no login, and no user identifier.
-- **Analytics or telemetry.** The current version sends none.
+- **Per-connection records.** We keep no log of individual connections — no row anywhere says "this IP connected to this room at this time". See [What we count](#what-we-count) for the only thing we do keep.
+- **Analytics or telemetry from the extension or the web app.** Neither sends anything to us. There is no analytics script, no crash reporter, no device identifier.
 
 ## What the relay necessarily sees
 
@@ -24,11 +25,32 @@ A relay is a network intermediary, so it unavoidably observes:
 - **The room ID** used to pair the two sides. It is a 128-bit random value generated per pairing and carries no information about you.
 - **Connection metadata**: source IP address, connection time, and the size and timing of messages. This is inherent to any network connection.
 
-The relay in this repository keeps no persistent storage for your session — it holds the live WebSocket connections in memory and drops everything when they close. The one exception is abuse protection: when an IP address exceeds the connection rate limit, a single "blocked until" timestamp is stored for that address and expires within a minute. No connection history, no session records, no analytics.
+The relay in this repository keeps no persistent storage for your session — it holds the live WebSocket connections in memory and drops everything when they close. There are exactly two exceptions, both narrow:
+
+- **Abuse protection.** When an IP address exceeds the connection rate limit, a single "blocked until" timestamp is stored for that address and expires within a minute.
+- **Daily totals.** Aggregate counters, described under [What we count](#what-we-count).
+
+No connection history, no session records, no per-user data.
 
 ### The managed relay we operate
 
-The managed relay at `relay.termhop.dev` runs the code in this repository, unmodified, on Cloudflare Workers. Concretely, that means we can see connection metadata (your IP address, when you connected, how much data moved) as it passes through, and we **cannot** see your terminal contents. We do not log, retain, or analyse the metadata beyond what Cloudflare does automatically as the network provider, and we do not sell or share it. Cloudflare processes the traffic as our infrastructure provider under its own terms.
+The managed relay at `relay.termhop.dev` runs the code in this repository, unmodified, on Cloudflare Workers. Concretely, that means we can see connection metadata (your IP address, when you connected, how much data moved) as it passes through, and we **cannot** see your terminal contents. We do not sell or share it. Cloudflare processes the traffic as our infrastructure provider under its own terms.
+
+<a name="what-we-count"></a>
+
+#### What we count
+
+We keep **daily totals only**, so that we can tell what the service costs to run and set a fair-use limit based on reality rather than guesswork. One row per day, looking like this:
+
+```json
+"2026-07-26": { "sessions": 12, "connSeconds": 8400, "msgHostToClient": 41200,
+                "msgClientToHost": 980, "bytes": 5512340,
+                "rateLimited": 0, "tooLarge": 0, "roomFull": 1 }
+```
+
+That is the whole record. It contains **no IP addresses, no room IDs, no timestamps finer than the day, no user agents, and nothing derived from your traffic's contents**. Because we never write a per-connection row, there is nothing to correlate afterwards — your session cannot be picked out of the totals even by us.
+
+The message counts are deliberately approximate: they are batched, so some are lost when the relay goes idle. We would rather have a number that is honest about being rough than build the machinery that would make it exact.
 
 The managed relay is provided free of charge and without a service-level commitment. It may be rate-limited, interrupted, or discontinued — see [TERMS.md](./TERMS.md).
 

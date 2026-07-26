@@ -143,13 +143,14 @@
   - ⚠️ 旧manifestは **192x192 の SVG data URI 1枚だけ**で、**TWA(Play Store)の要件を満たしていなかった**。TASK-26 の前提として先に解消した。
   - 残: 簡易オフライン(現状SWは push 専用で fetch ハンドラなし。**キャッシュを入れると更新の陳腐化リスクが出る**ので、必要性を見てから判断)。
 - **TASK-26 [P1] TWA→Play Store**: Bubblewrap・**assetlinks.json**(worker配信ドメインに設置)・署名鍵・掲載物(説明/スクショ/プライバシー)・$25登録。
-- **TASK-27 [P1] 軽量テレメトリ**: status: 設計済(ADR-009) / owner: claude-opus
+- **TASK-27 [P1] 軽量テレメトリ**: status: DONE(2026-07-26) / owner: claude-opus
   - **告知より先に入れる**。人が来てから「何も記録していなかった」では最初のデータを失うため。
   - 設計: 日次の集計カウンタのみを `StatsDay` DO に保持(個票なし・IP/room ID/詳細時刻は記録しない)。項目= sessions / connSeconds / msgHostToClient / msgClientToHost / bytes / 拒否カウンタ。参照は `GET /stats?key=<secret>`。
   - 実装の要点: 接続時刻は `serializeAttachment`(退避をまたいで保持)に載せる。メッセージ数は100件ごと+切断時に加算(1件1書き込みは無料枠を焼く)。**メモリ上の集計はDO退避で消えるため信用しない**([[F18]]の教訓)。
   - Analytics Engine は無料プランでの可否が不明なため不採用(ADR-009)。
   - **PRIVACY.md の同時改訂が必須**(現行の「メタデータを保持・分析しない」が不正確になる)。
-  - 内訳: (a) StatsDay DO + 集計フック (b) /stats エンドポイント+secret (c) PRIVACY改訂 (d) ローカル検証(集計が退避後も落ちないこと)
+  - **実装・本番検証まで完了(2026-07-26、F19)→ DONE**。ローカル12項目PASS、本番で150メッセージ→150計測(取りこぼしゼロ)。PRIVACY.md も改訂済(実際のJSON例+近似であることを明記)。運営用に `relay-cf/check-stats.sh`。
+  - `STATS_KEY` は `relay-cf/.stats-key.local`(gitignore)に保存。Cloudflareのsecretは読み出せないため。
 
 ### Stage 2: マネージド運用(ユーザーが付いてから)
 - TASK-28〜31。アカウント基盤・利用計測・マルチホスト・チーム/権限。**内容は非公開ロードマップで管理**(リポジトリ外)。
@@ -159,6 +160,7 @@
 - フェーズ2 Agent Managerミラー/内部コマンド操作(競合と同じ土俵。差別化が固まってから判断)。
 
 ### 進捗ログ(新しいものを上に)
+- 2026-07-26 claude-opus: **TASK-27 軽量テレメトリ DONE(設計→実装→本番検証)**。ADR-009の方針どおり日次集計のみを `StatsDay` DO に持つ形で実装。Analytics Engine は無料プランでの可否が不明なため不採用(F18の教訓)。F18の「DOのメモリ状態は消える」を設計に織り込み、接続時刻は serializeAttachment、メッセージ数は100件ごと+切断時に加算。ローカル12項目PASS(集計項目にIP/roomが混ざらないことも検証)、**本番で150メッセージ→150計測・取りこぼしゼロ**。PRIVACY.md を改訂し実JSON例と近似であることを明記。`relay-cf/check-stats.sh` で運営者が確認できる。**次**: 実機確認(ユーザー)→ TASK-26(TWA/Play Store)→ 告知。決済(TASK-28)は利用者が付くまで着手しない。
 - 2026-07-26 claude-opus: **ADR-008 マネージドリレーへ転換 → ゼロ設定で使えるようになった**。独自ドメイン `termhop.dev` を取得し、apex=PWA配信 / `relay.termhop.dev`=リレー として同一Workerに割当(workers.dev の旧URLも移行期間中は維持)。拡張の既定 relayUrl を `wss://relay.termhop.dev`、clientBaseUrl を `https://termhop.dev` に変更し、既定値が機能するようになったため初回起動ガードはURL妥当性チェックに縮小。運営者になったので TERMS.md 新設 + PRIVACY.md 改訂。TASK-25のアイコン/manifestも先行実施(旧manifestはSVG data URI 1枚でTWA要件未達だった)。**本番でE2EE通し確認**: ホストを本番リレーに繋ぎ、Playwrightで termhop.dev のQR URLを開いて『接続済み(E2EE)』→ セッション選択 → `echo MANAGED_RELAY_OK` の往復まで成立。v0.2.0 として公開予定。**次**: TASK-26(TWA/Play Store)、TASK-27(軽量テレメトリで実原価計測)。
 - 2026-07-26 claude-opus: **TASK-24 Open VSX 公開 DONE → Stage0/Stage1の入口を突破**。`himanande.antigravity-remote` v0.1.0 を公開し、配信物(2,860,953B・prebuilds20件・README/icon/署名)まで検証。先立って TASK-22 を本番検証し、**Cloudflare の Rate Limiting binding が本番で無効**(実WS90本でも発火せず)、さらに自前実装の初版も**本番のDO退避でゆっくり接続する攻撃に回避された**ことを実測 → バケツ状態の永続化で解決(F18)。**次の最重要論点**: 現状は利用者が自分で Cloudflare リレーを立てる必要があり、これが採用の最大の障壁。ADR-007 の無料枠(フェアユース)はマネージドリレー提供が前提なので、**Stage1でマネージドリレーを出すかの判断が必要**。
 - 2026-07-25 claude-opus: **TASK-23 公開整備 DONE / GitHub公開 / CI成功で TASK-21 も実質決着**。LICENSE(MIT)・icon・README(ストア掲載版)・CHANGELOG・PRIVACY・package.jsonメタを整備し `vsce package` 警告ゼロ。公開時に課金戦略・想定収益・競合分析が晒される問題に気付き、ADR-007本文とStage2タスクを `business/`(gitignore)へ退避、`main` を新規履歴で開始(旧履歴はローカル `master`)。GitHub public 化 <https://github.com/himanande/antigravity-remote>、publisher=himanande。CI(build-vsix.yml)を実行し3ジョブ成功 → linux-x64/arm64 は **GLIBC_2.28**、**.vsix 2.91MB / 全6ターゲット**で PTY 起動確認(F16追記)。**次**: TASK-22(リレーのレート制限)→ TASK-24(Open VSX公開、要 himanande 名前空間+トークン)。TASK-21 の残は Windows/macOS 実機確認のみ。

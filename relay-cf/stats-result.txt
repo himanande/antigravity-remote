@@ -1,0 +1,16 @@
+PASS: key なしは 404
+PASS: key 誤りは 404
+PASS: key 正しいと 200
+  初期値: {"sessions":0,"connSeconds":0,"msgHostToClient":0,"msgClientToHost":0,"bytes":0,"rateLimited":0,"tooLarge":0,"roomFull":0}
+PASS: client→host のメッセージが数えられる(120件送信) — 計測=100
+PASS: バイト数が増える — +4600
+PASS: sessions が2本ぶん増える — +2
+PASS: connSeconds が計上される — +18秒
+PASS: 切断時に端数のメッセージも回収される — 計測=120 / 送信=120
+PASS: 満室(roomFull)が数えられる — +1 (拒否検知=1)
+PASS: サイズ超過(tooLarge)が数えられる — +1
+PASS: 集計項目が想定どおり(IP/room等が混ざっていない) — bytes,connSeconds,msgClientToHost,msgHostToClient,rateLimited,roomFull,sessions,tooLarge
+
+最終: {"sessions":9,"connSeconds":24,"msgHostToClient":0,"msgClientToHost":120,"bytes":5520,"rateLimited":0,"tooLarge":1,"roomFull":1}
+
+ALL PASS

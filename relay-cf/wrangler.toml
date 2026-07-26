@@ -39,6 +39,15 @@ new_sqlite_classes = ["RelayRoom"]
 tag = "v2"
 new_sqlite_classes = ["RateGate"]
 
+# 軽量テレメトリ(TASK-27 / ADR-009)。日ごとに1インスタンス。
+[[durable_objects.bindings]]
+name = "STATS"
+class_name = "StatsDay"
+
+[[migrations]]
+tag = "v3"
+new_sqlite_classes = ["StatsDay"]
+
 # スマホPWA(client/)を同じworkerで配信する。静的ファイルに一致しない
 # リクエスト(/ws, /health)は default export の fetch に落ちる。
 # → 1ドメイン・1回のdeployでリレーとPWAが完結。clientBaseUrl設定は不要になる。

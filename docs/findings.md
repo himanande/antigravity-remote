@@ -196,6 +196,20 @@
 - 検証: 本番で上記の実測に加え、通常の中継が壊れていないことも確認(host↔client 往復 PASS)。`relay-cf/scratch-cf-ratelimit.js`(wrangler dev --local)で **4項目 PASS** — バースト40本前後まで通る(実測41本目まで、42回目で429)/超過は429/ブロック中は継続拒否/**15秒待って DO 退避を誘発しても拒否が維持**(永続化の確認)。`scratch-cf-limits.js` の12項目も再実行して PASS(退行なし)。
 - ⚠️ 残る限界: **多数のIP(ボットネット)からの分散接続は防げない**。1接続ごとに gate DO + room DO が作られるため。恒久策は独自ドメイン + Cloudflare WAF のレート制限ルール(workers.dev ドメインには WAF ルールを適用できない)。
 
+## F19. 軽量テレメトリの実装と本番検証(TASK-27 / ADR-009)
+- 確認日: 2026-07-26
+- 実装: `StatsDay` DO(`idFromName("stats:YYYY-MM-DD")`)に**日次の集計カウンタのみ**を持つ。項目= sessions / connSeconds / msgHostToClient / msgClientToHost / bytes / rateLimited / tooLarge / roomFull。参照は `GET /stats?key=<secret>&days=N`(`STATS_KEY` 未設定なら**404で機能ごと伏せる**、比較は定数時間)。運営用に `relay-cf/check-stats.sh`。
+- F18の教訓の適用:
+  - 接続時刻は `serializeAttachment` に載せる(**DOの退避をまたいで保持される**)。切断時に差分から `connSeconds` を出す。
+  - メッセージ数は**100件ごと + 切断時**にまとめて加算。1メッセージ1書き込みは無料枠(10万書き込み/日)を焼くため不可。
+  - 拒否カウンタ `rateLimited` は「**IPがブロックに入った回数**」で、拒否リクエスト1件ごとではない。攻撃中に計測自体がコストになるのを避けるため。
+- ローカル検証(`relay-cf/scratch-cf-stats.js`、wrangler dev --local): **12項目 PASS**。key なし/誤りは404・正しければ200、120件送信→**120件を正確に計上**(100件で一度flush + 切断時に端数回収)、sessions +2、connSeconds 計上、roomFull/tooLarge が各+1、**集計項目にIP/room等が混ざっていないことをキー一覧で検証**。
+- **本番検証**: 実WS接続で150メッセージ送信+2接続切断 → `{"sessions":2,"connSeconds":6,"msgClientToHost":150,"bytes":6900,...}`。**取りこぼしゼロ**で計上された。
+- 退行確認: `scratch-cf-limits.js` 12項目 PASS(`webSocketMessage` を async 化したが中継は集計より先に行うため影響なし)。`scratch-cf-ratelimit.js` は先行テストがトークンを消費した状態では「バースト40」が28で失敗するが、**回復を待てば41本でPASS**(テストの独立性の問題であり退行ではない)。
+- ⚠️ `wrangler dev` に秘密を渡すには**シェルの環境変数では不可**。`relay-cf/.dev.vars`(gitignore済み)に書く必要がある。最初これで「key 正しいのに404」を踏んだ。
+- ⚠️ Cloudflare の secret は**後から読み出せない**。`STATS_KEY` は `relay-cf/.stats-key.local`(gitignore・600)に保存してある。紛失時は `wrangler secret put STATS_KEY` で再設定する。
+- プライバシー: 個票を作らないので事後の突き合わせが原理的に不可能。`PRIVACY.md` に実際のJSON例を載せ、**メッセージ数が近似であることも明記**した(正確に見せかけない)。
+
 ---
 ### 追記のしかた
 新しい事実を確認したら F番号を採番して追記。**必ず再現コマンドと確認日を書く**。既存項目が古くなったら「⚠️ 20xx-xx-xx時点で無効」と追記(削除しない=履歴を残す)。

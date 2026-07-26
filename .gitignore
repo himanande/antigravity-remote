@@ -28,3 +28,7 @@ vendor-prebuilds/
 
 # 事業判断(価格・原価・競合)は公開しない
 business/
+
+# wrangler dev のローカル秘密(コミットしない)
+relay-cf/.dev.vars
+relay-cf/.stats-key.local
