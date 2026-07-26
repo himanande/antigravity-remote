@@ -53,7 +53,9 @@ try {
 const BUILTIN_PRESETS: Record<string, { file: string; args: string[] }> = {
   claude: { file: "claude", args: [] },
   codex: { file: "codex", args: [] },
-  gemini: { file: "gemini", args: [] },
+  // Antigravity の CLI。IDE内蔵の Agent Manager とは会話の保存先が別
+  // (~/.gemini/antigravity-cli/ と ~/.gemini/antigravity-ide/)。
+  agy: { file: "agy", args: [] },
   bash: { file: "bash", args: ["-l"] },
 };
 

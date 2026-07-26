@@ -97,7 +97,7 @@
           "enum": [
             "claude",
             "codex",
-            "gemini",
+            "agy",
             "bash"
           ],
           "description": "ホスト型セッションで起動する既定のプリセット。customPresets で追加したものも指定できる"
