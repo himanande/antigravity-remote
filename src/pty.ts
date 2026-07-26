@@ -42,10 +42,43 @@ try {
   );
 }
 
-const PRESETS: Record<string, { file: string; args: string[] }> = {
+/**
+ * 起動できるコマンドの許可リスト。
+ *
+ * ⚠️ これは**セキュリティ境界**である。スマホ側が送れるのは preset の**名前**だけで、
+ * コマンド文字列は送れない。したがって、リモートが任意のバイナリを起動することはできない。
+ * 一覧を増やすのは構わないが、「クライアントから受け取った文字列をそのまま spawn する」
+ * 実装に変えてはいけない。
+ */
+const BUILTIN_PRESETS: Record<string, { file: string; args: string[] }> = {
   claude: { file: "claude", args: [] },
+  codex: { file: "codex", args: [] },
+  gemini: { file: "gemini", args: [] },
   bash: { file: "bash", args: ["-l"] },
 };
+
+const PRESETS: Record<string, { file: string; args: string[] }> = { ...BUILTIN_PRESETS };
+
+/**
+ * 利用者(=PCの持ち主)が設定でプリセットを追加/上書きする。
+ * 定義するのはホスト側の設定だけなので、上の境界は保たれる。
+ */
+export function registerPresets(custom: Record<string, string>): void {
+  for (const k of Object.keys(PRESETS)) {
+    if (!(k in BUILTIN_PRESETS)) delete PRESETS[k];
+  }
+  Object.assign(PRESETS, BUILTIN_PRESETS);
+  for (const [name, cmd] of Object.entries(custom ?? {})) {
+    const parts = String(cmd).trim().split(/\s+/).filter(Boolean);
+    if (!name.trim() || parts.length === 0) continue;
+    PRESETS[name.trim()] = { file: parts[0], args: parts.slice(1) };
+  }
+}
+
+/** スマホ側に提示する選択肢(host.hello で告知する)。 */
+export function presetNames(): string[] {
+  return Object.keys(PRESETS);
+}
 
 export interface PtyOptions {
   preset: string;
@@ -64,6 +97,7 @@ export class PtySession {
   private scrollbackBytes = 0;
   private static readonly SCROLLBACK_MAX = 500; // チャンク数の上限
   private static readonly SCROLLBACK_BYTES_MAX = 256 * 1024; // 合計バイト上限(snapshot 1通の大きさを縛る)
+  private alive = true;
   private dataListeners = new Set<(chunk: string) => void>();
   private exitListeners = new Set<(code: number) => void>();
 
@@ -84,6 +118,7 @@ export class PtySession {
       for (const l of this.dataListeners) l(chunk);
     });
     this.proc.onExit(({ exitCode }) => {
+      this.alive = false;
       for (const l of this.exitListeners) l(exitCode);
     });
   }
@@ -102,13 +137,28 @@ export class PtySession {
     }
   }
 
+  // ⚠️ 終了済みの PTY を触ると node-pty が例外を投げ、**ホストプロセスごと落ちる**
+  // (`ioctl(2) failed, EBADF`)。スマホで終了済みセッションを開くと resize が飛ぶため、
+  // 誰でも簡単に踏める経路だった(F22)。以下は必ず生存確認 + try/catch で守る。
+  // 終了の検知(onExit)と操作の間には競合があるので、フラグだけでは不十分。
+
   /** リモートからの入力を PTY に書き込む(キー入力・許可プロンプト応答 FR-2.3)。 */
   write(data: string): void {
-    this.proc.write(data);
+    if (!this.alive) return;
+    try {
+      this.proc.write(data);
+    } catch {
+      this.alive = false; // 終了直後の競合。セッションは既に死んでいる
+    }
   }
 
   resize(cols: number, rows: number): void {
-    if (cols > 0 && rows > 0) this.proc.resize(cols, rows);
+    if (!this.alive || cols <= 0 || rows <= 0) return;
+    try {
+      this.proc.resize(cols, rows);
+    } catch {
+      this.alive = false;
+    }
   }
 
   /** 再接続時に直近出力を再送する(FR-2.4)。 */
@@ -127,6 +177,7 @@ export class PtySession {
   }
 
   dispose(): void {
+    this.alive = false;
     try {
       this.proc.kill();
     } catch {

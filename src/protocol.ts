@@ -102,6 +102,9 @@ export interface HostFeatures {
   agentMirror: boolean; // Agent Manager 会話ミラー(B)が有効か
   agentControl: boolean; // Agent Manager 操作(C, 実験・既定オフ)が有効か
   push: boolean; // Web Push 通知が有効か(VAPID鍵が用意され送信可能)
+  /** 起動を許可されたプリセット名。クライアントはこの中からしか選べない。
+   *  未指定の古いホスト向けに、クライアント側は既定値へフォールバックする。 */
+  presets?: string[];
 }
 
 /** Web Push 購読の JSON 表現(ブラウザ PushSubscription.toJSON())。 */

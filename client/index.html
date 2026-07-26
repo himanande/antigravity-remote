@@ -52,11 +52,15 @@
     .badge.exited { background:rgba(248,81,73,.18); color:var(--err); }
     #empty { color:var(--muted); text-align:center; padding:40px 20px; }
     #newBar { display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line);
-      background:var(--bar); }
+      background:var(--bar); overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    #newBar button { flex:none; }
 
     /* 端末 */
     #termView { flex:1; min-height:0; display:none; flex-direction:column; }
     #term { flex:1; min-height:0; padding:4px; }
+    /* スマホでスクロールバックを遡れるようにする。ネイティブのタッチスクロールも
+       効くようにしつつ、JS 側(enableTouchScroll)でも行送りを補う。 */
+    #term .xterm-viewport { touch-action:pan-y; -webkit-overflow-scrolling:touch; }
 
     /* スマホ用キーバー(端末ビュー下部)。矢印/Esc/Tab/Ctrl 等を補う。 */
     #keybar { display:flex; gap:6px; padding:6px 8px; background:var(--bar);
@@ -109,8 +113,7 @@
       <div id="empty">セッションがありません。<br>下のボタンで新規作成できます。</div>
     </div>
     <div id="newBar">
-      <button data-preset="claude" class="newBtn">＋ claude</button>
-      <button data-preset="bash" class="newBtn">＋ bash</button>
+      <!-- ホストが host.hello で告知したプリセットから動的に生成する(下記 renderPresets) -->
     </div>
 
     <!-- 端末画面 -->
@@ -172,10 +175,46 @@
     let ws = null;
 
     // ── xterm ──
-    const term = new Terminal({ cursorBlink: true, fontSize: 14, theme: { background: "#1e1e1e" } });
+    const term = new Terminal({
+      cursorBlink: true, fontSize: 14, theme: { background: "#1e1e1e" },
+      scrollback: 5000, // スマホでは遡れる量が体験に直結するので既定(1000)より多く持つ
+    });
     const fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
     term.open($("term"));
+
+    // ── スマホのタッチでスクロールバックを遡る ──
+    // xterm.js の viewport はタッチのドラッグを拾わないことがあり(端末はテキスト選択が
+    // 優先される)、実機で「過去に遡れない」状態になる。指の移動量を行数に換算して
+    // scrollLines で明示的に送る。1本指のときだけ扱い、ピンチ等は邪魔しない。
+    (function enableTouchScroll() {
+      const el = $("term");
+      let lastY = null, accum = 0;
+      const lineH = () => {
+        const row = el.querySelector(".xterm-rows > div");
+        const h = row && row.getBoundingClientRect().height;
+        return h && h > 0 ? h : 17;
+      };
+      el.addEventListener("touchstart", (e) => {
+        lastY = e.touches.length === 1 ? e.touches[0].clientY : null;
+        accum = 0;
+      }, { passive: true });
+      el.addEventListener("touchmove", (e) => {
+        if (lastY === null || e.touches.length !== 1) return;
+        const y = e.touches[0].clientY;
+        accum += lastY - y; // 上へスワイプ(y減少)= 新しい方へ
+        lastY = y;
+        const h = lineH();
+        const lines = Math.trunc(accum / h);
+        if (lines !== 0) {
+          accum -= lines * h;
+          term.scrollLines(lines);
+          // ページのプルダウン更新などに取られないようにする
+          if (e.cancelable) e.preventDefault();
+        }
+      }, { passive: false });
+      el.addEventListener("touchend", () => { lastY = null; accum = 0; }, { passive: true });
+    })();
     // Ctrl トグルが armed のとき、ソフトキーボードで打った次の1文字を制御コードに変換する
     // (例: 'c' → Ctrl-C=\x03)。@..._ / A..Z / a..z を 0x1f マスクで制御文字化。
     let ctrlArmed = false;
@@ -382,6 +421,7 @@
     function handle(m) {
       switch (m.t) {
         case "host.hello":
+          renderPresets(m.features && m.features.presets);
           // push 対応なら通知ボタンを出す
           if (m.features && m.features.push && m.vapidPublicKey && "serviceWorker" in navigator && "PushManager" in window) {
             vapidPublicKey = m.vapidPublicKey;
@@ -546,9 +586,20 @@
         setConn("通知の有効化に失敗: " + (e && e.message ? e.message : e), false);
       }
     }
-    for (const b of document.querySelectorAll(".newBtn")) {
-      b.addEventListener("click", () => sendMsg({ t: "session.create", preset: b.dataset.preset }));
+    // 新規作成ボタンはホストが告知したプリセットから作る。
+    // 古いホスト(presets 未告知)向けに既定へフォールバックする。
+    function renderPresets(names) {
+      const bar = $("newBar");
+      bar.innerHTML = "";
+      for (const name of (names && names.length ? names : ["claude", "bash"])) {
+        const b = document.createElement("button");
+        b.className = "newBtn";
+        b.textContent = "＋ " + name;
+        b.addEventListener("click", () => sendMsg({ t: "session.create", preset: name }));
+        bar.appendChild(b);
+      }
     }
+    renderPresets(null);
 
     // ── 起動: E2EE 時は libsodium 初期化+鍵生成してから接続 ──
     (async function boot() {

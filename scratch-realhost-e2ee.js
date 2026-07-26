@@ -58,10 +58,16 @@ try {
     `node-pty \u306E\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F(${process.platform}-${process.arch})\u3002\u3053\u306E\u74B0\u5883\u5411\u3051\u306E\u30D0\u30A4\u30CA\u30EA\u304C\u540C\u68B1\u3055\u308C\u3066\u3044\u306A\u3044\u53EF\u80FD\u6027\u304C\u3042\u308A\u307E\u3059\u3002\u539F\u56E0: ` + e.message
   );
 }
-var PRESETS = {
+var BUILTIN_PRESETS = {
   claude: { file: "claude", args: [] },
+  codex: { file: "codex", args: [] },
+  gemini: { file: "gemini", args: [] },
   bash: { file: "bash", args: ["-l"] }
 };
+var PRESETS = { ...BUILTIN_PRESETS };
+function presetNames() {
+  return Object.keys(PRESETS);
+}
 var PtySession = class _PtySession {
   proc;
   scrollback = [];
@@ -3865,7 +3871,7 @@ var RelayClient = class {
     this.toClient({
       t: "host.hello",
       protocol: PROTOCOL_VERSION,
-      features: { ...this.features, push: !!this.push },
+      features: { ...this.features, push: !!this.push, presets: presetNames() },
       vapidPublicKey: this.push?.publicKey
     });
     this.toClient({ t: "session.list", sessions: this.sessions.list() });

@@ -3,6 +3,18 @@
 All notable changes to this extension are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] — 2026-07-27
+
+### Fixed
+
+- **A dead session could crash the host.** Resizing a terminal whose process had already exited threw out of `node-pty` (`ioctl(2) failed, EBADF`) and took the whole extension host down with it — including every other running session. Opening an exited session from the phone was enough to trigger it. All PTY handle access is now guarded.
+- **Scrollback can be reached by touch.** Dragging inside the terminal on a phone did not scroll back through history; it does now, and the buffer holds 5000 lines instead of 1000.
+
+### Added
+
+- **More presets, and your own.** `codex` and `gemini` join `claude` and `bash`, and `antigravityRemote.customPresets` lets you define your own (`{"aider": "aider --no-auto-commits"}`). The phone picks from this list by name and can never send a command string, so the allowlist remains a security boundary. The phone's buttons are built from whatever the host advertises.
+- **`clr` key** in the mobile key bar. It sends Ctrl+L rather than typing `clear`, so it does the right thing at a prompt and inserts nothing inside a TUI.
+
 ## [0.2.1] — 2026-07-26
 
 ### Fixed

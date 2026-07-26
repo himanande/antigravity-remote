@@ -1,3 +1,4 @@
+import { presetNames } from "./pty";
 import WebSocket from "ws";
 import { SessionManager } from "./sessionManager";
 import {
@@ -171,7 +172,7 @@ export class RelayClient {
     this.toClient({
       t: "host.hello",
       protocol: PROTOCOL_VERSION,
-      features: { ...this.features, push: !!this.push },
+      features: { ...this.features, push: !!this.push, presets: presetNames() },
       vapidPublicKey: this.push?.publicKey,
     });
     this.toClient({ t: "session.list", sessions: this.sessions.list() });

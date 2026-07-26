@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import * as QRCode from "qrcode";
-import { defaultCwd } from "./pty";
+import { defaultCwd, registerPresets, presetNames } from "./pty";
 import { SessionManager } from "./sessionManager";
 import { RelayClient } from "./relayClient";
 import { createPairing, buildPairingUrl, type Pairing } from "./pairing";
@@ -17,6 +17,19 @@ export function activate(context: vscode.ExtensionContext) {
   extContext = context;
   output = vscode.window.createOutputChannel("Antigravity Remote");
   output.appendLine("Antigravity Remote 起動");
+
+  // 設定のプリセットを反映(起動時と設定変更時)。スマホ側はこの一覧からしか選べない。
+  const applyPresets = () => {
+    const cfg = vscode.workspace.getConfiguration("antigravityRemote");
+    registerPresets(cfg.get<Record<string, string>>("customPresets", {}) ?? {});
+    output.appendLine(`利用可能なプリセット: ${presetNames().join(", ")}`);
+  };
+  applyPresets();
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("antigravityRemote.customPresets")) applyPresets();
+    })
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("antigravityRemote.startSession", startSession),

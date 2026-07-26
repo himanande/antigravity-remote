@@ -2,7 +2,7 @@
   "name": "antigravity-remote",
   "displayName": "Antigravity Remote",
   "description": "Control your IDE terminals (Claude Code, Gemini CLI, any CLI) from your phone. End-to-end encrypted, multi-session, two-way synced.",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "publisher": "himanande",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -96,9 +96,19 @@
           "default": "claude",
           "enum": [
             "claude",
+            "codex",
+            "gemini",
             "bash"
           ],
-          "description": "ホスト型セッションで起動するプリセットコマンド(任意コマンド起動は不可)"
+          "description": "ホスト型セッションで起動する既定のプリセット。customPresets で追加したものも指定できる"
+        },
+        "antigravityRemote.customPresets": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "スマホから起動できるコマンドを追加する(例: `{\"aider\": \"aider --no-auto-commits\"}`)。**この一覧はセキュリティ境界です**: スマホ側が送れるのはここで定義した名前だけで、コマンド文字列そのものは送れません。組み込み(claude / codex / gemini / bash)と同名にすると上書きします。"
         }
       }
     }
