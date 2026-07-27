@@ -166,6 +166,11 @@
   ```
 - **CI実行結果(2026-07-25、run 30136849726)**: 3ジョブすべて成功。`node:20-bullseye` コンテナで作った linux-x64 / linux-arm64 は **`GLIBC_2.28` 要求**(Debian 10 / RHEL 8 相当。実質すべての現行ディストロで動く)。生成された `.vsix` は **2.91MB / 全6ターゲット同梱**(darwin×2・win32×2・linux×2)で、展開して `pty.spawn` → 起動成功。**開発機ビルドの GLIBC_2.42 問題は解消**。
 - 未了: **Windows / macOS 実機での起動確認**(手元に環境が無い)。バイナリは node-pty 公式 prebuilds をそのまま同梱しているだけなので理屈上の懸念は少ないが、実機1回の確認は必要。
+- ✅ **別Electron世代での裏付け(2026-07-28)**: **VS Code 1.126.0(Electron 42 / Node 24.15)** に同じ `.vsix` を入れ、同梱バイナリで `pty.spawn` 成功。Antigravity は Electron 39 / Node 22.21 なので、**2世代離れたランタイムで同一バイナリが動く**ことを実証した。N-API による ABI 非依存という F16 の結論が裏付けられた。`node:sqlite`(会話閲覧に使用)も VS Code 側で利用可。
+  ```bash
+  ELECTRON_RUN_AS_NODE=1 /usr/share/code/code -e "require('<ext>/dist/node_modules/node-pty').spawn('/bin/bash',['-lc','echo ok'],{cols:80,rows:24})"
+  ```
+  → よって README/告知の「VS Code 互換エディタで動く」は**実測に基づく主張**にできる(ただし配布は Open VSX のみで、素の VS Code では .vsix 手動導入が必要)。
 
 ## F17. リレーの濫用対策(TASK-22)
 - 実装日: 2026-07-25

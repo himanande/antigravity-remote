@@ -162,7 +162,11 @@
 
 - **TASK-32 [P0] Windows / macOS 実機確認**(TASK-21の残)。告知の**前に**必須。
   初回起動が壊れているOSがあると、一度きりの告知機会を無駄にする。手元に環境が無いため要協力。
-- **TASK-33 [P0] 告知**: Zenn/note の技術記事、X、Reddit(r/vscode)、Antigravity コミュニティ。
+- **TASK-33 [P0] 告知**: status: 下書き済(2026-07-28) / owner: claude-opus
+  - 下書き: `business/draft-zenn.md`(日本語・製品紹介中心)、`business/draft-reddit-en.md`(英語)。
+  - ⚠️ **掲載先は r/vscode を勧めない**: 読者はほぼ Microsoft 版 VS Code 利用者で、Open VSX の拡張は手動 .vsix 導入になる。摩擦が大きく自己宣伝にも厳しい。**r/ClaudeAI / Show HN / r/selfhosted** を優先(下書きに理由と文面あり)。
+  - ✅ **VS Code 実機で動作確認済(2026-07-28)**: Electron 42/Node 24.15 で同梱バイナリが動いた(F16追記)。「VS Code互換」の記述は実測に基づく。
+  - 旧メモ: Zenn/note の技術記事、X、Reddit、Antigravity コミュニティ。
   訴求は「**生ターミナル × マルチセッション × 双方向同期 × エージェント非依存**」(ADR-007の差別化の芯)。
   会話閲覧(機能B)も競合が持たない要素として添える。
 - **TASK-34 [P1] 実使用で出た粗さの解消**: 会話一覧の題名ノイズ(agy/Claude Code の一部)、
