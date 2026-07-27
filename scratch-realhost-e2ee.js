@@ -3991,7 +3991,7 @@ ${m2.text.replace(/\n/g, "\r\n")}\r
 }
 
 // src/relayClient.ts
-var RelayClient = class {
+var RelayClient = class _RelayClient {
   constructor(url, sessions, log, room = "default-room", pairing, push, features = { pty: true, agentMirror: false, agentControl: false, push: false }) {
     this.url = url;
     this.sessions = sessions;
@@ -4004,6 +4004,10 @@ var RelayClient = class {
   ws;
   closed = false;
   reconnectTimer;
+  pingTimer;
+  lastPong = 0;
+  static PING_MS = 3e4;
+  static DEAD_MS = 9e4;
   // クライアントが現在購読中の sessionId。再接続でリセットされる。
   subscribed = /* @__PURE__ */ new Set();
   managerDisposers = [];
@@ -4074,15 +4078,54 @@ var RelayClient = class {
     ws.on("open", () => {
       this.log("\u30EA\u30EC\u30FC\u63A5\u7D9A\u78BA\u7ACB");
       this.send({ t: "hello", role: "host" });
+      this.startKeepalive(ws);
     });
     ws.on("message", (raw) => this.onMessage(raw.toString()));
+    ws.on("pong", () => {
+      this.lastPong = Date.now();
+    });
     ws.on("close", () => {
       this.log("\u30EA\u30EC\u30FC\u5207\u65AD");
+      this.stopKeepalive();
       this.subscribed.clear();
       this.clientKeys = void 0;
       this.scheduleReconnect();
     });
     ws.on("error", (err) => this.log(`\u30EA\u30EC\u30FC\u30A8\u30E9\u30FC: ${err.message}`));
+  }
+  /**
+   * 接続の維持。
+   *
+   * NAT や中継は**無通信のTCPを黙って切る**ため、放置すると「繋がっているつもりで
+   * 実は死んでいる」状態になる。WebSocket の ping フレームで生存確認する。
+   * ping/pong は Cloudflare 側が Hibernation 中でも処理するので、DO を起こさない
+   * =**課金対象のリクエストにならない**(ブラウザは ping を送れないので、そちらは
+   * アプリ層の `{t:"ping"}` を使っている)。
+   */
+  startKeepalive(ws) {
+    this.stopKeepalive();
+    this.lastPong = Date.now();
+    this.pingTimer = setInterval(() => {
+      if (ws.readyState !== import_ws.default.OPEN) return;
+      if (Date.now() - this.lastPong > _RelayClient.DEAD_MS) {
+        this.log("\u30EA\u30EC\u30FC\u304B\u3089\u306E\u5FDC\u7B54\u304C\u9014\u7D76\u3048\u305F\u305F\u3081\u518D\u63A5\u7D9A\u3057\u307E\u3059");
+        try {
+          ws.terminate();
+        } catch {
+        }
+        return;
+      }
+      try {
+        ws.ping();
+      } catch {
+      }
+    }, _RelayClient.PING_MS);
+  }
+  stopKeepalive() {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = void 0;
+    }
   }
   scheduleReconnect() {
     if (this.closed || this.reconnectTimer) return;
@@ -4236,6 +4279,7 @@ var RelayClient = class {
   }
   dispose() {
     this.closed = true;
+    this.stopKeepalive();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     for (const d2 of this.managerDisposers) d2();
     this.ws?.close();

@@ -2,7 +2,7 @@
   "name": "antigravity-remote",
   "displayName": "Antigravity Remote",
   "description": "Control your IDE terminals (Claude Code, Gemini CLI, any CLI) from your phone. End-to-end encrypted, multi-session, two-way synced.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "himanande",
   "license": "MIT",
   "icon": "media/icon.png",

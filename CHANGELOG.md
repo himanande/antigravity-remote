@@ -3,6 +3,12 @@
 All notable changes to this extension are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.1] — 2026-07-27
+
+### Fixed
+
+- **Connections no longer die when left idle.** Neither side sent keepalives, so carrier NATs and proxies silently dropped idle connections — you would only find out when you tried to type. Both ends now ping, and the phone reconnects the instant it comes back to the foreground rather than waiting on a timer that a backgrounded tab never runs.
+
 ## [0.4.0] — 2026-07-27
 
 ### Added

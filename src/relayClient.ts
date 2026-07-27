@@ -30,6 +30,10 @@ export class RelayClient {
   private ws?: WebSocket;
   private closed = false;
   private reconnectTimer?: NodeJS.Timeout;
+  private pingTimer?: NodeJS.Timeout;
+  private lastPong = 0;
+  private static readonly PING_MS = 30_000;
+  private static readonly DEAD_MS = 90_000;
   // クライアントが現在購読中の sessionId。再接続でリセットされる。
   private subscribed = new Set<string>();
   private managerDisposers: Array<() => void> = [];
@@ -119,15 +123,46 @@ export class RelayClient {
     ws.on("open", () => {
       this.log("リレー接続確立");
       this.send({ t: "hello", role: "host" });
+      this.startKeepalive(ws);
     });
     ws.on("message", (raw) => this.onMessage(raw.toString()));
+    ws.on("pong", () => { this.lastPong = Date.now(); });
     ws.on("close", () => {
       this.log("リレー切断");
+      this.stopKeepalive();
       this.subscribed.clear(); // 再接続後にクライアントが再 subscribe する
       this.clientKeys = undefined; // 再接続時に鍵交換をやり直す
       this.scheduleReconnect();
     });
     ws.on("error", (err) => this.log(`リレーエラー: ${err.message}`));
+  }
+
+  /**
+   * 接続の維持。
+   *
+   * NAT や中継は**無通信のTCPを黙って切る**ため、放置すると「繋がっているつもりで
+   * 実は死んでいる」状態になる。WebSocket の ping フレームで生存確認する。
+   * ping/pong は Cloudflare 側が Hibernation 中でも処理するので、DO を起こさない
+   * =**課金対象のリクエストにならない**(ブラウザは ping を送れないので、そちらは
+   * アプリ層の `{t:"ping"}` を使っている)。
+   */
+  private startKeepalive(ws: WebSocket): void {
+    this.stopKeepalive();
+    this.lastPong = Date.now();
+    this.pingTimer = setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      // pong が長く返らない=経路が死んでいる。閉じて再接続に倒す。
+      if (Date.now() - this.lastPong > RelayClient.DEAD_MS) {
+        this.log("リレーからの応答が途絶えたため再接続します");
+        try { ws.terminate(); } catch { /* noop */ }
+        return;
+      }
+      try { ws.ping(); } catch { /* noop */ }
+    }, RelayClient.PING_MS);
+  }
+
+  private stopKeepalive(): void {
+    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = undefined; }
   }
 
   private scheduleReconnect(): void {
@@ -297,6 +332,7 @@ export class RelayClient {
 
   dispose(): void {
     this.closed = true;
+    this.stopKeepalive();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     for (const d of this.managerDisposers) d();
     this.ws?.close();

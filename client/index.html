@@ -417,12 +417,66 @@
     }
 
     let hostSeen = false, noHostTimer = 0;
+
+    // ── 接続の維持(スマホ特有の事情への対処)──
+    // ・キャリアNATや中継は**無通信のTCPを黙って切る**。切れたことに気づけないと、
+    //   操作しようとして初めて失敗する。→ 定期的に ping を送る。
+    // ・画面ロックやバックグラウンドでは**タイマーが凍結**され、再接続タイマーも動かない。
+    //   → 前面に戻った瞬間に即座に張り直す。
+    // ping は `{t:"ping"}` として送る。リレーは `t:"msg"` 以外を転送しないので、
+    // ホストには届かず**中継の無駄がない**。画面が見えているときだけ送る。
+    const PING_MS = 45_000;
+    const DEAD_MS = 100_000; // これだけ受信が無ければ死んだとみなす
+    let pingTimer = 0, lastRecv = 0, retry = 0, reconnectTimer = 0;
+
+    const stopKeepalive = () => { if (pingTimer) { clearInterval(pingTimer); pingTimer = 0; } };
+    function startKeepalive() {
+      stopKeepalive();
+      pingTimer = setInterval(() => {
+        if (!ws || ws.readyState !== 1) return;
+        if (document.visibilityState !== "visible") return; // 非表示中は送らない(復帰時に張り直す)
+        // 応答が長く途絶えていれば、切れているのに気づけていない状態。能動的に張り直す。
+        if (lastRecv && Date.now() - lastRecv > DEAD_MS) { try { ws.close(); } catch {} return; }
+        try { ws.send(JSON.stringify({ t: "ping" })); } catch {}
+      }, PING_MS);
+    }
+
+    function scheduleReconnect() {
+      clearTimeout(reconnectTimer);
+      const wait = Math.min(1000 * Math.pow(2, retry++), 15000); // 1,2,4,8,15秒
+      reconnectTimer = setTimeout(connect, wait);
+    }
+
+    /** 前面復帰・回線復帰の瞬間に、待たずに張り直す。 */
+    function reconnectNow() {
+      // OPEN(1)だけでなく **CONNECTING(0)** も「進行中」。ここを見落とすと
+      // 接続中にもう1本張ってしまい、古い方の onopen が新しい ws を触って
+      // "Still in CONNECTING state" で落ちる。
+      if (ws && (ws.readyState === 0 || ws.readyState === 1)) return;
+      clearTimeout(reconnectTimer);
+      retry = 0;
+      connect();
+    }
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") reconnectNow();
+    });
+    window.addEventListener("pageshow", reconnectNow);
+    window.addEventListener("online", reconnectNow);
+    window.addEventListener("focus", reconnectNow);
+
     function connect() {
       setConn("接続中…", false);
       keys = null; // 再接続で鍵交換をやり直す
-      ws = new WebSocket(wsUrl);
-      ws.onopen = () => {
-        ws.send(JSON.stringify({ t: "hello", role: "client" }));
+      const sock = new WebSocket(wsUrl);
+      ws = sock;
+      // 以降のハンドラでは **sock**(自分自身)を使う。共有変数 ws を見ると、
+      // 張り直しで差し替わった別のソケットを操作してしまう。
+      const stale = () => ws !== sock;
+      sock.onopen = () => {
+        if (stale()) { try { sock.close(); } catch {} return; }
+        retry = 0; lastRecv = Date.now();
+        startKeepalive();
+        sock.send(JSON.stringify({ t: "hello", role: "client" }));
         // ⚠️ リレーには繋がるがホスト(PC)が居ない、という状態がある。
         // 保存済みペアリングで起動したとき、PC側の拡張が止まっている/再起動して
         // ペアリングが切れていると、無言で待ち続けて「何も起きない」ように見える。
@@ -438,7 +492,7 @@
           const proof = sodium.crypto_generichash(32,
             concat(clientKp.publicKey, hostPk), pairingSecret);
           setConn("鍵交換中…", false);
-          ws.send(JSON.stringify({ t: "msg", payload: {
+          sock.send(JSON.stringify({ t: "msg", payload: {
             t: "kx.hello", pub: B64(clientKp.publicKey), proof: B64(proof),
           }}));
         } else {
@@ -447,13 +501,17 @@
           sendMsg({ t: "session.list.request" });
         }
       };
-      ws.onclose = () => {
+      sock.onclose = () => {
+        if (stale()) return;
         hostSeen = false; clearTimeout(noHostTimer);
+        stopKeepalive();
         setConn("切断(再接続します)", false);
-        setTimeout(connect, 2000);
+        scheduleReconnect();
       };
-      ws.onerror = () => setConn("エラー", false);
-      ws.onmessage = (ev) => {
+      sock.onerror = () => { if (!stale()) setConn("エラー", false); };
+      sock.onmessage = (ev) => {
+        if (stale()) return;
+        lastRecv = Date.now();
         let env; try { env = JSON.parse(ev.data); } catch { return; }
         if (env.t !== "msg") return;
         const p = env.payload;
