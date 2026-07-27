@@ -56,6 +56,7 @@
     .badge.idle { background:#333; color:var(--muted); }
     .badge.exited { background:rgba(248,81,73,.18); color:var(--err); }
     #empty { color:var(--muted); text-align:center; padding:40px 20px; }
+    .row.moreRow { justify-content:center; color:var(--muted); font-size:13px; }
     #newBar { display:flex; gap:8px; padding:10px 12px; border-top:1px solid var(--line);
       background:var(--bar); overflow-x:auto; -webkit-overflow-scrolling:touch; }
     #newBar button { flex:none; }
@@ -364,6 +365,8 @@
     // **ホーム画面(PWA)から起動するとクエリが丸ごと消える**。URLからしか読まないと、
     // 別の部屋へ平文で繋ぎに行き「セッションが出ない・何も動かない」状態になる(F24)。
     const PAIR_KEY = "ar_pairing_v1";
+    const PAIRED_AT_KEY = "ar_paired_at_v1"; // このペアリングを開始した時刻(会話の基準)
+    const HIDDEN_KEY = "ar_hidden_conv_v1";  // 手動で一覧から消した会話
     const loadPairing = () => {
       try { return JSON.parse(localStorage.getItem(PAIR_KEY) || "null"); } catch { return null; }
     };
@@ -376,6 +379,17 @@
         hpk: params.get("hpk"),
         ps: params.get("ps"),
       };
+      // **新しいQRでペアリングし直したら会話一覧をリセットする。**
+      // 過去の会話が残っても、そこから作業を再開できるわけではないので、
+      // 一覧を占有するだけになる。ペアリング時刻より後に動きがあった会話だけを出す。
+      // (完全に消すのではなく、一覧の下から「以前の会話」を開ける)
+      const prev = loadPairing();
+      if (!prev || prev.room !== conn.room) {
+        try {
+          localStorage.setItem(PAIRED_AT_KEY, String(Date.now()));
+          localStorage.removeItem(HIDDEN_KEY); // 手動で隠した分もこの機に戻す
+        } catch { /* noop */ }
+      }
       try { localStorage.setItem(PAIR_KEY, JSON.stringify(conn)); } catch { /* プライベートモード等 */ }
       // ペアリング秘密をアドレスバーと履歴に残さない(保存済みなので機能には影響しない)
       try { history.replaceState(null, "", location.pathname); } catch { /* noop */ }
@@ -604,10 +618,14 @@
       rows.innerHTML = "";
       // 端末(動いているもの)を先に、会話(読み物)は後ろへ。会話は件数が多く、
       // 混ぜると肝心の端末が埋もれる。同種内は新しい順。
-      const list = [...sessions.values()]
-        .filter((s) => !(s.kind === "agent" && hidden.has(s.id)))
+      const pairedAt = Number(localStorage.getItem(PAIRED_AT_KEY) || 0);
+      const isOld = (s) => s.kind === "agent" && pairedAt > 0 && s.createdAt < pairedAt && !showOld;
+      const all = [...sessions.values()].filter((s) => !(s.kind === "agent" && hidden.has(s.id)));
+      const oldCount = all.filter(isOld).length;
+      const list = all
+        .filter((s) => !isOld(s))
         .sort((a, b) => (a.kind === b.kind ? b.createdAt - a.createdAt : a.kind === "agent" ? 1 : -1));
-      $("empty").classList.toggle("hidden", list.length > 0);
+      $("empty").classList.toggle("hidden", list.length > 0 || oldCount > 0);
       for (const s of list) {
         const row = document.createElement("div");
         row.className = "row";
@@ -628,11 +646,20 @@
         });
         rows.appendChild(row);
       }
+      // 畳んだ会話は「消えた」のではなく「畳んだ」ことが分かるようにする。
+      // ここが無いと、リセット後に過去の会話へ二度と辿り着けない。
+      if (oldCount > 0) {
+        const more = document.createElement("div");
+        more.className = "row moreRow";
+        more.textContent = `以前の会話 ${oldCount}件を表示`;
+        more.addEventListener("click", () => { showOld = true; renderList(); });
+        rows.appendChild(more);
+      }
     }
+    let showOld = false; // このペアリング以前の会話も出すか(保存しない=次回また畳む)
 
     // 一覧から消した会話(この端末にのみ保存)。会話はファイルなので**消さない**。
     // 勝手に履歴を削除するのは行き過ぎなので、隠すだけに留める。
-    const HIDDEN_KEY = "ar_hidden_conv_v1";
     const hidden = new Set((() => {
       try { return JSON.parse(localStorage.getItem(HIDDEN_KEY) || "[]"); } catch { return []; }
     })());
