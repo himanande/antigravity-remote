@@ -466,6 +466,11 @@
       reconnectTimer = setTimeout(connect, wait);
     }
 
+    /** ホストが戻ったときの再同期。ホスト再起動後は鍵が変わるので張り直しが要る。 */
+    function reconnectNow2() {
+      try { if (ws) ws.close(); } catch { /* noop */ }
+    }
+
     /** 前面復帰・回線復帰の瞬間に、待たずに張り直す。 */
     function reconnectNow() {
       // OPEN(1)だけでなく **CONNECTING(0)** も「進行中」。ここを見落とすと
@@ -532,11 +537,33 @@
         if (stale()) return;
         lastRecv = Date.now();
         let env; try { env = JSON.parse(ev.data); } catch { return; }
+        // リレーは相手の出入りを peer-joined / peer-left で教えてくれる。
+        // これを捨てていたため、**PC側が落ちても無言で待ち続けていた**(F31)。
+        // 拡張を更新するとホストは再起動しペアリングが切れるので、誰もが踏む経路。
+        if (env.t === "peer-left" && env.role === "host") {
+          hostSeen = false;
+          clearTimeout(noHostTimer);
+          setConn("PCが切断されました。PC側で「ペアリング開始」を実行しQRを読み直してください", false);
+          return;
+        }
+        if (env.t === "peer-joined" && env.role === "host") {
+          // PCが戻ってきた。鍵交換からやり直す(ホストは再起動で鍵を失っている)。
+          setConn("PCが接続しました。同期中…", false);
+          reconnectNow2();
+          return;
+        }
         if (env.t !== "msg") return;
         const p = env.payload;
         // 鍵交換応答
         if (p && p.t === "kx.ack") { onKxAck(); return; }
-        if (p && p.t === "kx.reject") { setConn("ペアリング拒否(秘密不一致)", false); return; }
+        if (p && p.t === "kx.reject") {
+          // ホストを再起動するとペアリング秘密は作り直される(=古いQRは無効)。
+          // これは仕様どおりだが、「秘密不一致」では何をすればよいか分からないので、
+          // **次の行動**を書く。
+          hostSeen = false; clearTimeout(noHostTimer);
+          setConn("ペアリングが無効です。PC側で「ペアリング開始」を実行しQRを読み直してください", false);
+          return;
+        }
         // 暗号封筒 → 復号
         if (p && p.t === "enc") { if (keys) { const inner = openEnv(p); if (inner) handle(inner); } return; }
         // 平文 app(E2EE不要時のみ)
@@ -785,7 +812,14 @@
         const b = document.createElement("button");
         b.className = "newBtn";
         b.textContent = "＋ " + name;
-        b.addEventListener("click", () => sendMsg({ t: "session.create", preset: name }));
+        b.addEventListener("click", () => {
+          // ホストが居ないまま押しても無反応に見える。押した時点で分かるようにする。
+          if (!hostSeen) {
+            setConn("PCが応答しません。PC側で「ペアリング開始」を実行しQRを読み直してください", false);
+            return;
+          }
+          sendMsg({ t: "session.create", preset: name });
+        });
         bar.appendChild(b);
       }
     }
