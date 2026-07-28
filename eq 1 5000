@@ -1,0 +1,28 @@
+[33mcdcced6[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m [TASK-29] feat: フェアユース上限を実装(時間ではなくメッセージ量で見る)
+[33m33e3c25[m [TASK-27] feat: 利用者数の計測を追加(日替わりハッシュで追跡不能に)+ 課金方針の先出し
+[33mc68e17f[m [TASK-33] docs: 告知の下書き + VS Code実機でN-APIのABI非依存を裏付け
+[33mfb037ab[m [fix] PCが落ちても無言だった問題(リレーの peer-left を捨てていた)
+[33mb64ebaf[m [fix] 新しいQRでペアリングし直したら会話一覧をリセットする
+[33mca25834[m [fix] 一覧から消せるようにする(削除UIが存在しなかった)
+[33m36e5bd5[m [docs] タスク整理: Stage1.5「使われにいく」を新設(TASK-32〜34)
+[33md910441[m [fix] 放置で接続が切れる問題(両側キープアライブ + 前面復帰で即再接続)
+[33mef8d285[m [TASK-B] feat: エージェント会話をスマホから閲覧できるようにする(v0.4.0)
+[33ma48e7c9[m [fix] プリセットの gemini を agy(Antigravity CLI)に差し替え + 会話保存先の調査(F27)
+[33m1e8159f[m [fix] スクロールをピクセル1:1追従+慣性に + ホスト不在時の案内(F25追記/F26)
+[33me74d6a0[m [fix] PWAホーム画面起動で何も動かない致命バグ + スクロール経路の追加
+[33mb3e690a[m [fix] 終了済みPTYへのresizeでホストが落ちる致命バグを修正 + 実機FB対応(v0.3.0)
+[33m20a7a1a[m [TASK-18] fix: ショートカット追加が実機で反応しない不具合 + clr ボタン追加
+[33m6b51f05[m [fix] .claude/** も .vsix から除外
+[33m67ffa2d[m [fix] テスト生成物 pairing-url.txt が公開物に混入していたので除去(v0.2.1)
+[33mf3ca579[m [chore] サブエージェント定義(implementer=sonnet / design-reviewer=opus)を追加
+[33mc4b253e[m [TASK-27] feat: 軽量テレメトリ(日次集計のみ)を実装
+[33m51824de[m [TASK-27] docs: ADR-009 軽量テレメトリの設計(日次集計のみ・DO保持)
+[33mf0ea229[m [ADR-008] feat: 既定をマネージドリレーにしてゼロ設定で使えるようにする
+[33ma6bce9d[m [TASK-24] docs: Open VSX 公開完了(himanande.antigravity-remote v0.1.0)
+[33me0b287c[m [TASK-22] fix: レート制限のバケツ状態を永続化(本番のDO退避による回避を塞ぐ)
+[33m9f95b7c[m [TASK-22] fix: 接続レート制限を RateGate DO による自前実装に置き換え
+[33mae4da68[m [TASK-24] fix: CIが展開する dl/ が .vsix に混入していたので除外
+[33m425fedf[m [TASK-24] fix: リレー未設定のまま実行したときに案内を出す
+[33m7b606d0[m [TASK-22] security: リレーの濫用対策(接続レート制限・同時接続上限・流量/サイズ上限)
+[33m61ff837[m [TASK-21/23] docs: CI成功(全6ターゲット/GLIBC_2.28)とGitHub公開を記録
+[33mf95d083[m Initial public release (v0.1.0)
