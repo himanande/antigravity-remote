@@ -44,11 +44,13 @@ We keep **daily totals only**, so that we can tell what the service costs to run
 
 ```json
 "2026-07-26": { "sessions": 12, "connSeconds": 8400, "msgHostToClient": 41200,
-                "msgClientToHost": 980, "bytes": 5512340,
+                "msgClientToHost": 980, "bytes": 5512340, "uniqueHosts": 3,
                 "rateLimited": 0, "tooLarge": 0, "roomFull": 1 }
 ```
 
 That is the whole record. It contains **no IP addresses, no room IDs, no timestamps finer than the day, no user agents, and nothing derived from your traffic's contents**. Because we never write a per-connection row, there is nothing to correlate afterwards — your session cannot be picked out of the totals even by us.
+
+`uniqueHosts` deserves an explanation, because counting installations is the one place where it would be easy to quietly build a profile, and we have deliberately made that impossible. The extension generates a random number once, on first run — it is not derived from your machine, your account, or anything about you. Before that number is counted, the relay hashes it together with **today's date** and keeps only the first 8 bytes. The raw number is never stored. Because the date is part of the hash, the value is different every day, so **we cannot tell whether today's installation is the same one we saw yesterday** — not even in principle. What survives is a single integer: how many distinct values arrived that day.
 
 The message counts are deliberately approximate: they are batched, so some are lost when the relay goes idle. We would rather have a number that is honest about being rough than build the machinery that would make it exact.
 

@@ -43,6 +43,12 @@ The pairing QR embeds a fresh random room ID and the shared secret, so a QR is s
 
 By default this routes through a free managed relay we operate. **It cannot read your terminal** — encryption happens on your devices, so the relay only ever forwards ciphertext. It is provided as-is with no uptime guarantee ([terms](./TERMS.md)).
 
+### Will this stay free?
+
+The extension, the phone app and the relay are MIT and **self-hosting will always be free** — that is what the licence is for, and we are not going to take it back.
+
+The managed relay is free today. If it ever grows into something that costs real money to run, the things we would charge for are conveniences we have not built yet — managing several machines from one phone, team access — and a fair-use cap on the relay we operate. **What works for you today keeps working**: hosting terminals, running as many sessions as you like, two-way sync, end-to-end encryption. We would rather say this now than surprise you later.
+
 ### Prefer your own relay?
 
 Fully supported, and it takes about a minute. Deploy [`relay-cf/`](./relay-cf) to your own Cloudflare account (the free tier is enough), then:
@@ -140,6 +146,12 @@ Claude Code などのCLIをPCで起動したまま外出し、スマホのブラ
 3. 出てきたQRをスマホで読み取ると接続完了
 
 既定では本プロジェクトが運営する無料のマネージドリレーを経由します。**運営者にもターミナルの中身は読めません**(暗号化は端末側で行われ、リレーは暗号文しか扱いません)。無保証での提供です([利用規約](./TERMS.md))。
+
+### ずっと無料ですか?
+
+拡張・スマホアプリ・リレーは MIT で、**自前で立てて使う分は今後もずっと無料です**。ライセンスとはそういうものですし、後から取り上げるつもりはありません。
+
+マネージドリレーも現状は無料です。もし運用費が本当にかかる規模になったら課金するかもしれませんが、その対象は**まだ作っていない便利機能**(複数PCを1つのスマホから束ねる、チームでの利用)と、こちらが運営するリレーの利用量上限です。**いま使えているもの**(ターミナルのホスト、セッションを好きなだけ持つこと、双方向同期、E2EE)**はそのまま使えます**。後で驚かせるより、先に書いておきます。
 
 自前のリレーを使いたい場合は、[`relay-cf/`](./relay-cf) をCloudflareの無料枠にデプロイして `antigravityRemote.relayUrl` を自分のURLに変えてください(空にすると既定に戻ります)。こちらも一級の利用方法として維持します。
 

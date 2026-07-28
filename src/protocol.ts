@@ -134,7 +134,10 @@ export type HostErrorCode =
 // リレーはこの層だけを見る。payload は不透明(将来 E2EE 暗号文)。
 
 export type RelayEnvelope =
-  | { t: "hello"; role: "host" | "client" }
+  // hello はリレーとの平文のやりとり(相手には転送されない)。
+  // installId は**利用者数の集計専用**の乱数で、リレーは日替わりの値と混ぜて
+  // ハッシュ化した上で「その日の重複しない数」しか持たない。
+  | { t: "hello"; role: "host" | "client"; installId?: string }
   | { t: "peer-joined"; role: "host" | "client" }
   | { t: "peer-left"; role: "host" | "client" }
   | { t: "msg"; payload: unknown }; // payload = ClientToHost | HostToClient(暗号化後は不透明)

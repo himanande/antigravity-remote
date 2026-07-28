@@ -47,7 +47,9 @@ export class RelayClient {
     private readonly room: string = "default-room",
     private readonly pairing?: Pairing,
     private readonly push?: PushSender,
-    private readonly features: HostFeatures = { pty: true, agentMirror: false, agentControl: false, push: false }
+    private readonly features: HostFeatures = { pty: true, agentMirror: false, agentControl: false, push: false },
+    /** 利用者数の集計用。リレーにのみ渡り、クライアントには送らない。 */
+    private readonly installId?: string
   ) {}
 
   /** 直近に一覧化した会話。subscribe でパスを引くために持つ。 */
@@ -122,7 +124,7 @@ export class RelayClient {
 
     ws.on("open", () => {
       this.log("リレー接続確立");
-      this.send({ t: "hello", role: "host" });
+      this.send({ t: "hello", role: "host", installId: this.installId });
       this.startKeepalive(ws);
     });
     ws.on("message", (raw) => this.onMessage(raw.toString()));

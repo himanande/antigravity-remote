@@ -40,6 +40,9 @@ interface Counters {
   roomFull: number;
 }
 
+/** 1日あたりの重複しない設置数の上限(異常時に無制限に膨らませない)。 */
+const MAX_HOSTS_TRACKED = 20_000;
+
 const COUNTER_KEYS: (keyof Counters)[] = [
   "sessions",
   "connSeconds",
@@ -86,9 +89,20 @@ export class StatsDay {
       await this.state.storage.put("c", cur);
       return new Response("ok");
     }
+    if (path === "/host") {
+      const hex = (await req.text()).trim();
+      if (!/^[0-9a-f]{8,32}$/.test(hex)) return new Response("bad", { status: 400 });
+      const seen = (await this.state.storage.get<string[]>("hosts")) ?? [];
+      if (!seen.includes(hex) && seen.length < MAX_HOSTS_TRACKED) {
+        seen.push(hex);
+        await this.state.storage.put("hosts", seen);
+      }
+      return new Response("ok");
+    }
     if (path === "/read") {
       const cur = (await this.state.storage.get<Counters>("c")) ?? zeroCounters();
-      return new Response(JSON.stringify(cur), {
+      const seen = (await this.state.storage.get<string[]>("hosts")) ?? [];
+      return new Response(JSON.stringify({ ...cur, uniqueHosts: seen.length }), {
         headers: { "content-type": "application/json" },
       });
     }
@@ -319,7 +333,14 @@ export class RelayRoom {
       return;
     }
     // hello はローカルリレー互換のため受けるが、role は既に確定済みなので無視でよい。
-    if (env.t === "hello") return;
+    // ただし installId があれば**利用者数の集計だけ**に使う。
+    if (env.t === "hello") {
+      const id = (env as { installId?: unknown }).installId;
+      if (typeof id === "string" && id.length >= 16 && id.length <= 64) {
+        void this.countHost(id);
+      }
+      return;
+    }
     if (env.t !== "msg") return;
 
     const self = this.roleOf(ws);
@@ -352,6 +373,28 @@ export class RelayRoom {
     const extra: Partial<Counters> = { sessions: 1 };
     if (att?.ts) extra.connSeconds = Math.max(0, Math.round((Date.now() - att.ts) / 1000));
     await this.flushStats(extra);
+  }
+
+  /**
+   * 利用者数の集計。
+   *
+   * ⚠️ **生の installId は保存しない。** その日の日付を混ぜて SHA-256 したものの先頭だけを
+   * 持つので、日をまたいで同じ設置を突き合わせることが**こちらにもできない**。
+   * 保持するのは「その日に何個の異なる値が来たか」だけ。
+   */
+  private async countHost(installId: string): Promise<void> {
+    try {
+      const day = dayId();
+      const buf = new TextEncoder().encode(installId + "|" + day);
+      const digest = await crypto.subtle.digest("SHA-256", buf);
+      const hex = [...new Uint8Array(digest).slice(0, 8)]
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+      const stub = this.env.STATS.get(this.env.STATS.idFromName(day));
+      await stub.fetch("https://stats/host", { method: "POST", body: hex });
+    } catch {
+      /* 集計はベストエフォート。中継は止めない */
+    }
   }
 
   private note(k: keyof Counters, n: number): void {

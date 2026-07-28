@@ -42,6 +42,22 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
+/**
+ * 匿名の設置ID。**利用者数を数えるためだけ**に使う乱数で、個人・端末・IPとは結び付かない。
+ * リレー側はこれを日替わりの値と混ぜてハッシュ化した上で「その日の重複しない数」しか持たない
+ * (生のIDは保存しない/日をまたいだ突き合わせもできない)。
+ */
+function getInstallId(): string {
+  let id = extContext.globalState.get<string>("installId");
+  if (!id) {
+    const b = new Uint8Array(16);
+    (globalThis.crypto ?? require("crypto").webcrypto).getRandomValues(b);
+    id = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+    void extContext.globalState.update("installId", id);
+  }
+  return id;
+}
+
 /** VAPID 鍵を globalState に永続化して PushSender を得る。push 無効時は undefined。 */
 function getPushSender(cfg: vscode.WorkspaceConfiguration): PushSender | undefined {
   if (!cfg.get<boolean>("enablePush", true)) return undefined;
@@ -170,7 +186,7 @@ function connectRelay(cfg: vscode.WorkspaceConfiguration, pairing?: Pairing) {
   const agentMirror = cfg.get<boolean>("showAgentConversations", true);
   const relay = new RelayClient(
     relayUrl, active.manager, (m) => output.appendLine(m), room, pairing, getPushSender(cfg),
-    { pty: true, agentMirror, agentControl: false, push: false }
+    { pty: true, agentMirror, agentControl: false, push: false }, getInstallId()
   );
   relay.start();
   active.relay = relay;

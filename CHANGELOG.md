@@ -3,6 +3,13 @@
 All notable changes to this extension are documented here.
 This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-07-28
+
+### Added
+
+- **Anonymous installation counting**, so we can tell how many people actually use this before deciding on any fair-use limit. The extension generates one random number on first run and the relay keeps only a count of distinct values per day — hashed with the date, so **we cannot tell whether today's installation is one we saw yesterday**. The raw number is never stored. [PRIVACY.md](./PRIVACY.md) explains it in full.
+- A plain answer in the README to "will this stay free?" — self-hosting always is, and nothing that works today gets taken away.
+
 ## [0.4.1] — 2026-07-27
 
 ### Fixed
