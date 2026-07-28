@@ -256,6 +256,19 @@ interface Attachment {
 /** 集計をまとめて送るしきい値。1メッセージ1書き込みは無料枠を焼くため必須。 */
 const STATS_FLUSH_EVERY = 100;
 
+/**
+ * 1つの room が1日に中継できるメッセージ数の上限(フェアユース)。
+ *
+ * ⚠️ **接続時間ではなくメッセージ数で見る。** Cloudflare の課金単位は DO リクエストで、
+ * Hibernation により**無通信の接続はほぼ無料**。つまり「24時間つなぎっぱなし」は安く、
+ * 「1時間で大量出力を流す」が高い。時間で上限を切ると、コストと無関係な指標で
+ * 正規利用者を締め出すことになる(F33)。
+ *
+ * 100万通/日は、端末作業の実測(数万通/日)の20倍以上あり、通常利用では当たらない。
+ * `yes` の垂れ流しのような異常だけを止めるための安全弁。
+ */
+const ROOM_MSGS_PER_DAY = 1_000_000;
+
 // --- 1 room 内の上限(TASK-22)---
 // host は再接続の重なりを考慮して 2 まで許す。client は同時に見る端末の想定数。
 const MAX_HOSTS = 2;
@@ -284,6 +297,10 @@ export class RelayRoom {
   // 切断時に送るので、失われるのは最大 STATS_FLUSH_EVERY-1 件(原価把握には十分)。
   private pending: Partial<Counters> = {};
   private pendingMsgs = 0;
+
+  // フェアユース用の日次使用量。**永続化する**(メモリだけだと DO の退避で
+  // リセットされ、上限が意味を失う。F18 と同じ罠)。
+  private usage?: { day: string; msgs: number };
 
   constructor(
     private readonly state: DurableObjectState,
@@ -355,7 +372,20 @@ export class RelayRoom {
     this.note(self === "host" ? "msgHostToClient" : "msgClientToHost", 1);
     this.note("bytes", message.length);
     this.pendingMsgs += 1;
-    if (this.pendingMsgs >= STATS_FLUSH_EVERY) await this.flushStats();
+    if (this.pendingMsgs >= STATS_FLUSH_EVERY) {
+      const n = this.pendingMsgs;
+      await this.flushStats();
+      // 上限判定も 100 件ごと。1通ごとに永続化すると無料枠の書き込みを焼く。
+      if (await this.overDailyBudget(n)) {
+        for (const peer of this.state.getWebSockets()) {
+          trySend(peer, JSON.stringify({ t: "msg", payload: {
+            t: "error", code: "rate-limited",
+            message: "本日の中継量の上限に達しました。時間をおくか、自前のリレーをご利用ください(relay-cf/)。",
+          }}));
+          try { peer.close(1013, "daily budget exceeded"); } catch { /* noop */ }
+        }
+      }
+    }
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
@@ -395,6 +425,21 @@ export class RelayRoom {
     } catch {
       /* 集計はベストエフォート。中継は止めない */
     }
+  }
+
+  /**
+   * 日次のメッセージ使用量を加算し、上限超過かを返す。
+   * 日付が変わったら自動的にリセットされる(前日分は持ち越さない)。
+   */
+  private async overDailyBudget(add: number): Promise<boolean> {
+    const day = dayId();
+    if (!this.usage || this.usage.day !== day) {
+      const saved = await this.state.storage.get<{ day: string; msgs: number }>("usage");
+      this.usage = saved && saved.day === day ? saved : { day, msgs: 0 };
+    }
+    this.usage.msgs += add;
+    await this.state.storage.put("usage", this.usage);
+    return this.usage.msgs > ROOM_MSGS_PER_DAY;
   }
 
   private note(k: keyof Counters, n: number): void {

@@ -52,7 +52,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const mid = await readStats();
   check(
     `client→host のメッセージが数えられる(${N}件送信)`,
-    mid.msgClientToHost >= 100 && mid.msgClientToHost <= N,
+    // ⚠️ 累計ではなく**差分**で判定する。累計で見ると2回目以降の実行で必ず落ちる。
+    mid.msgClientToHost - before.msgClientToHost >= 100 &&
+      mid.msgClientToHost - before.msgClientToHost <= N,
     `計測=${mid.msgClientToHost - before.msgClientToHost}`
   );
   check("バイト数が増える", mid.bytes > before.bytes, `+${mid.bytes - before.bytes}`);
@@ -95,7 +97,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   // 6. 記録してはいけないものが混ざっていないこと
   const keys = Object.keys(s5).sort();
-  const expected = ["bytes","connSeconds","msgClientToHost","msgHostToClient","rateLimited","roomFull","sessions","tooLarge"];
+  const expected = ["bytes","connSeconds","msgClientToHost","msgHostToClient","rateLimited","roomFull","sessions","tooLarge","uniqueHosts"];
   check("集計項目が想定どおり(IP/room等が混ざっていない)", JSON.stringify(keys) === JSON.stringify(expected), keys.join(","));
 
   log("\n最終: " + JSON.stringify(s5));
